@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>cosinder. - powered by cosine.club</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Fontshare: Zodiak (display) + Satoshi (body) -->
+    <link href="https://api.fontshare.com/v2/css?f[]=zodiak@400,700&f[]=satoshi@400,500,700&display=swap" rel="stylesheet">
+    
+    <!-- YouTube IFrame API -->
+    <script src="https://www.youtube.com/iframe_api"></script>
+    
+    <style>
+        :root {
+            --color-bg: #fdf8f8;
+            --color-bg-alt: #faf5f5;
+            --color-pink-soft: #f5e6ed;
+            --color-pink-medium: #e8d4db;
+            --color-pink-border: #d4c8d0;
+            --color-purple-soft: #e8dff5;
+            --color-purple-medium: #c9bde0;
+            --color-purple-border: #d4c8d0;
+            --color-text: #3d3a42;
+            --color-text-muted: #6b6570;
+        }
+        
+        body {
+            font-family: 'Satoshi', sans-serif;
+            background: var(--color-bg);
+        }
+        
+        h1, h2, h3, .font-display {
+            font-family: 'Zodiak', serif;
+        }
+        
+        .vinyl-record {
+            background: radial-gradient(circle at 30% 30%, #e8e0e4 0%, #d4c8d0 100%);
+            box-shadow: 0 2px 4px rgba(0,0,0,0.08);
+        }
+        
+        .vinyl-label {
+            background: radial-gradient(circle, #faf5f5 0%, #e8dff5 100%);
+        }
+        
+        .card-stack {
+            perspective: 1000px;
+        }
+        
+        .swipe-card {
+            transition: transform 0.3s ease, opacity 0.3s ease;
+            cursor: grab;
+            user-select: none;
+            touch-action: none;
+        }
+        
+        .swipe-card:active {
+            cursor: grabbing;
+        }
+        
+        .swipe-card.swiping {
+            transition: none;
+        }
+        
+        .swipe-indicator {
+            position: absolute;
+            top: 50%;
+            transform: translateY(-50%);
+            font-size: 4rem;
+            font-weight: bold;
+            opacity: 0;
+            transition: opacity 0.2s;
+            pointer-events: none;
+        }
+        
+        .swipe-indicator.like {
+            right: 2rem;
+            color: #d4a5a5;
+        }
+        
+        .swipe-indicator.dislike {
+            left: 2rem;
+            color: #9b8bb5;
+        }
+        
+        .autocomplete-dropdown {
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        
+        .loading-spinner {
+            border: 3px solid rgba(200, 180, 200, 0.3);
+            border-top-color: var(--color-purple-medium);
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 0.8s linear infinite;
+        }
+        
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        
+        @keyframes pulsate {
+            from, to { opacity: 1; }
+            50% { opacity: 0.7; }
+        }
+        
+        .snippet-status-pulsate {
+            animation: pulsate 1s ease-in-out infinite;
+        }
+        
+        .snippet-indicator {
+            transition: all 0.3s ease;
+        }
+        
+        .snippet-indicator.active {
+            background-color: var(--color-pink-soft);
+            transform: scale(1.2);
+        }
+    </style>
+</head>
+<body class="min-h-screen">
+    <div id="root"></div>
+    
+    <!-- React and ReactDOM from CDN -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    
+    <!-- Babel Standalone for JSX -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <!-- Google Identity Services -->
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
+    
+    <!-- Main App -->
+    <script type="text/babel" src="app.js"></script>
+</body>
+</html>

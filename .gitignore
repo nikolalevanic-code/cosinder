@@ -1,0 +1,14 @@
+# Dependencies
+node_modules/
+
+# Secrets
+.env
+
+# Cursor local state
+.cursor/
+
+# Mac OS
+.DS_Store
+
+# Logs
+*.log

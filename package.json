@@ -1,0 +1,16 @@
+{
+  "name": "dj-music-discovery",
+  "version": "1.0.0",
+  "description": "Tinder-style music discovery tool for DJs",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "dotenv": "^17.2.4",
+    "googleapis": "^128.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
