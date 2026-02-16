@@ -166,6 +166,8 @@ function AudioSnippetPlayer({ videoId, onComplete, onError, autoPlay = true, isM
     const [isPlaying, setIsPlaying] = useState(false);
     const [playerReady, setPlayerReady] = useState(false);
     const [needsUserGesture, setNeedsUserGesture] = useState(false);
+    const [hasAudioEnabled, setHasAudioEnabled] = useState(!IS_MOBILE); // false on mobile (needs gesture), true on desktop (autoplay works)
+    const hasAudioEnabledRef = useRef(!IS_MOBILE);
     const [holdingDot, setHoldingDot] = useState(null);
     const holdingDotRef = useRef(null);
     const snippetTimerRef = useRef(null);
@@ -182,6 +184,7 @@ function AudioSnippetPlayer({ videoId, onComplete, onError, autoPlay = true, isM
     const pressStartRef = useRef(0);
 
     isMutedRef.current = isMuted ?? false;
+    hasAudioEnabledRef.current = hasAudioEnabled;
 
     const getPlayer = (which) => which === 'A' ? playerARef.current : playerBRef.current;
 
@@ -194,6 +197,9 @@ function AudioSnippetPlayer({ videoId, onComplete, onError, autoPlay = true, isM
         setPlayerReady(false);
         setHoldingDot(null);
         setNeedsUserGesture(false);
+        const initialAudioEnabled = !IS_MOBILE;
+        setHasAudioEnabled(initialAudioEnabled); // Reset to initial state: false on mobile, true on desktop
+        hasAudioEnabledRef.current = initialAudioEnabled;
         playersReadyRef.current = 0;
 
         const initPlayer = () => {
@@ -207,7 +213,9 @@ function AudioSnippetPlayer({ videoId, onComplete, onError, autoPlay = true, isM
                     setPlayerReady(true);
                     playersReadyRef.current = (playersReadyRef.current || 0) + 1;
                     const needed = IS_MOBILE ? 1 : 2;
-                    if (playersReadyRef.current >= needed && autoPlay && !hasPlayedRef.current) {
+                    // On mobile, wait for user gesture (hasAudioEnabledRef) before autoplaying
+                    const canAutoplay = IS_MOBILE ? hasAudioEnabledRef.current : true;
+                    if (playersReadyRef.current >= needed && autoPlay && !hasPlayedRef.current && canAutoplay) {
                         hasPlayedRef.current = true;
                         if (IS_MOBILE) setNeedsUserGesture(false);
                         playSnippets();
@@ -465,36 +473,81 @@ function AudioSnippetPlayer({ videoId, onComplete, onError, autoPlay = true, isM
             </div>
             <p className="text-xs text-[#6b6570] opacity-80">hold dot to keep playing</p>
             {onMuteToggle && (
-                <button
-                    type="button"
-                    onClick={(e) => {
-                        e.stopPropagation();
-                        const newMuted = !isMuted;
-                        const p = getPlayer(activePlayerRef.current);
-                        if (p) {
-                            try {
-                                if (newMuted) {
-                                    if (p.mute) p.mute();
-                                    else p.setVolume(0);
-                                } else {
-                                    if (p.unMute) p.unMute();
-                                    if (p.setVolume) p.setVolume(100);
+                <>
+                    {/* Show play button on mobile before audio is enabled */}
+                    {!hasAudioEnabled && IS_MOBILE && (
+                        <button
+                            type="button"
+                            onTouchStart={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                e.stopImmediatePropagation();
+                            }}
+                            onPointerDown={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                e.stopImmediatePropagation();
+                            }}
+                            onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                e.stopImmediatePropagation();
+                                setHasAudioEnabled(true);
+                                hasAudioEnabledRef.current = true;
+                                // Unmute when enabling audio
+                                if (isMuted && onMuteToggle) {
+                                    onMuteToggle();
                                 }
-                            } catch (err) {}
-                        }
-                        onMuteToggle();
-                    }}
-                    onPointerDown={(e) => e.stopPropagation()}
-                    className="p-1.5 rounded text-[#6b6570] hover:text-[#3d3a42] hover:bg-[#f5e6ed] transition-colors"
-                    aria-label={isMuted ? 'unmute' : 'mute'}
-                    title={isMuted ? (IS_MOBILE ? 'tap to unmute' : 'unmute (space)') : (IS_MOBILE ? 'tap to mute' : 'mute (space)')}
-                >
-                    {isMuted ? (
-                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2" /></svg>
-                    ) : (
-                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" /></svg>
+                                // Trigger playback if player is ready and hasn't played yet
+                                if (playerReady && !hasPlayedRef.current) {
+                                    hasPlayedRef.current = true;
+                                    playSnippets();
+                                }
+                            }}
+                            className="p-1.5 rounded text-[#6b6570] hover:text-[#3d3a42] hover:bg-[#f5e6ed] transition-colors"
+                            aria-label="play audio"
+                            title="tap to play audio"
+                        >
+                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                            </svg>
+                        </button>
                     )}
-                </button>
+                    {/* Show mute/unmute button after audio is enabled (or always on desktop) */}
+                    {hasAudioEnabled && (
+                        <button
+                            type="button"
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                const newMuted = !isMuted;
+                                const p = getPlayer(activePlayerRef.current);
+                                if (p) {
+                                    try {
+                                        if (newMuted) {
+                                            if (p.mute) p.mute();
+                                            else p.setVolume(0);
+                                        } else {
+                                            if (p.unMute) p.unMute();
+                                            if (p.setVolume) p.setVolume(100);
+                                        }
+                                    } catch (err) {}
+                                }
+                                onMuteToggle();
+                            }}
+                            onPointerDown={(e) => e.stopPropagation()}
+                            className="p-1.5 rounded text-[#6b6570] hover:text-[#3d3a42] hover:bg-[#f5e6ed] transition-colors"
+                            aria-label={isMuted ? 'unmute' : 'mute'}
+                            title={isMuted ? (IS_MOBILE ? 'tap to unmute' : 'unmute (space)') : (IS_MOBILE ? 'tap to mute' : 'mute (space)')}
+                        >
+                            {isMuted ? (
+                                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2" /></svg>
+                            ) : (
+                                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" /></svg>
+                            )}
+                        </button>
+                    )}
+                </>
             )}
             <div id={idBase.current + '-A'} style={{ position: 'absolute', left: '-9999px', width: IS_MOBILE ? 250 : 1, height: IS_MOBILE ? 250 : 1 }} />
             <div id={idBase.current + '-B'} style={{ position: 'absolute', left: '-9999px', width: IS_MOBILE ? 250 : 1, height: IS_MOBILE ? 250 : 1 }} />

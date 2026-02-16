@@ -247,10 +247,7 @@ const server = http.createServer((req, res) => {
     }
 
     // Serve static files
-    let filePath = '.' + pathname;
-    if (filePath === './') {
-        filePath = './index.html';
-    }
+    let filePath = pathname === '/' ? './index.html' : path.join('.', pathname);
 
     const extname = String(path.extname(filePath)).toLowerCase();
     const contentType = mimeTypes[extname] || 'application/octet-stream';
@@ -258,9 +255,11 @@ const server = http.createServer((req, res) => {
     fs.readFile(filePath, (error, content) => {
         if (error) {
             if (error.code === 'ENOENT') {
+                console.error('File not found:', filePath);
                 res.writeHead(404, { 'Content-Type': 'text/plain' });
                 res.end('404 Not Found');
             } else {
+                console.error('Server error:', error);
                 res.writeHead(500);
                 res.end('Server Error: ' + error.code);
             }
