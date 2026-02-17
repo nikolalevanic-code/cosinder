@@ -182,6 +182,7 @@ function AudioSnippetPlayer({ videoId, onComplete, onError, autoPlay = true, isM
     const isMutedRef = useRef(false);
     const pressedDotRef = useRef(null);
     const pressStartRef = useRef(0);
+    const playButtonHandledRef = useRef(false);
 
     isMutedRef.current = isMuted ?? false;
     hasAudioEnabledRef.current = hasAudioEnabled;
@@ -446,6 +447,41 @@ function AudioSnippetPlayer({ videoId, onComplete, onError, autoPlay = true, isM
         }
     }, [isMuted, currentSnippet, playerReady]);
 
+    // Shared handler for play button (works for both touch and click)
+    const handlePlayButtonClick = (e, source) => {
+        e.preventDefault();
+        e.stopPropagation();
+        e.stopImmediatePropagation();
+        
+        // Prevent double-firing
+        if (playButtonHandledRef.current) return;
+        playButtonHandledRef.current = true;
+        setTimeout(() => { playButtonHandledRef.current = false; }, 300);
+        
+        console.log(`[play button] ${source} fired, playerReady:`, playerReady, 'hasPlayedRef:', hasPlayedRef.current);
+        setHasAudioEnabled(true);
+        hasAudioEnabledRef.current = true;
+        
+        // Unmute when enabling audio
+        if (isMuted && onMuteToggle) {
+            onMuteToggle();
+        }
+        
+        // Always try to play if player is ready
+        if (playerReady) {
+            if (!hasPlayedRef.current) {
+                console.log('[play button] Calling playSnippets()');
+                hasPlayedRef.current = true;
+                playSnippets();
+            } else {
+                console.log('[play button] Player already ready, attempting to play');
+                playSnippets();
+            }
+        } else {
+            console.log('[play button] Player not ready yet, playerReady:', playerReady);
+        }
+    };
+
     return (
         <div className="flex flex-col items-center gap-2 py-2">
             <div className="flex gap-2">
@@ -479,7 +515,7 @@ function AudioSnippetPlayer({ videoId, onComplete, onError, autoPlay = true, isM
                         <button
                             type="button"
                             onTouchStart={(e) => {
-                                e.preventDefault();
+                                // Don't preventDefault - we need the user gesture for YouTube audio
                                 e.stopPropagation();
                                 e.stopImmediatePropagation();
                             }}
@@ -488,21 +524,13 @@ function AudioSnippetPlayer({ videoId, onComplete, onError, autoPlay = true, isM
                                 e.stopPropagation();
                                 e.stopImmediatePropagation();
                             }}
+                            onTouchEnd={(e) => {
+                                // onTouchEnd is more reliable than onClick on mobile Safari
+                                handlePlayButtonClick(e, 'onTouchEnd');
+                            }}
                             onClick={(e) => {
-                                e.preventDefault();
-                                e.stopPropagation();
-                                e.stopImmediatePropagation();
-                                setHasAudioEnabled(true);
-                                hasAudioEnabledRef.current = true;
-                                // Unmute when enabling audio
-                                if (isMuted && onMuteToggle) {
-                                    onMuteToggle();
-                                }
-                                // Trigger playback if player is ready and hasn't played yet
-                                if (playerReady && !hasPlayedRef.current) {
-                                    hasPlayedRef.current = true;
-                                    playSnippets();
-                                }
+                                // onClick as fallback for desktop
+                                handlePlayButtonClick(e, 'onClick');
                             }}
                             className="p-1.5 rounded text-[#6b6570] hover:text-[#3d3a42] hover:bg-[#f5e6ed] transition-colors"
                             aria-label="play audio"
