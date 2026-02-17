@@ -168,6 +168,7 @@ function AudioSnippetPlayer({ videoId, onComplete, onError, autoPlay = true, isM
     const [needsUserGesture, setNeedsUserGesture] = useState(false);
     const [hasAudioEnabled, setHasAudioEnabled] = useState(!IS_MOBILE); // false on mobile (needs gesture), true on desktop (autoplay works)
     const hasAudioEnabledRef = useRef(!IS_MOBILE);
+    const [debug, setDebug] = useState("idle");
     const [holdingDot, setHoldingDot] = useState(null);
     const holdingDotRef = useRef(null);
     const snippetTimerRef = useRef(null);
@@ -272,9 +273,11 @@ function AudioSnippetPlayer({ videoId, onComplete, onError, autoPlay = true, isM
     }, [videoId]);
 
     const playSnippets = async () => {
+        setDebug("playSnippets:enter");
         console.log('[snippets] playSnippets called');
         const pa = playerARef.current;
         if (!pa || !pa.getDuration) {
+            setDebug("playSnippets:noPlayer");
             console.log('[snippets] no player or getDuration, returning');
             return;
         }
@@ -306,9 +309,12 @@ function AudioSnippetPlayer({ videoId, onComplete, onError, autoPlay = true, isM
         try {
             pa.seekTo(positions[0], true);
             pa.setVolume(isMutedRef.current ? 0 : 100);
+            setDebug("playSnippets:beforePlay");
             pa.playVideo();
+            setDebug("playSnippets:playCalled");
             console.log('[snippets] playVideo called');
         } catch (e) {
+            setDebug(`error:${e.message}`);
             console.error('[snippets] playVideo error:', e);
         }
         setCurrentSnippet(0);
@@ -449,36 +455,44 @@ function AudioSnippetPlayer({ videoId, onComplete, onError, autoPlay = true, isM
 
     // Shared handler for play button (works for both touch and click)
     const handlePlayButtonClick = (e, source) => {
-        e.preventDefault();
-        e.stopPropagation();
-        e.stopImmediatePropagation();
-        
-        // Prevent double-firing
-        if (playButtonHandledRef.current) return;
-        playButtonHandledRef.current = true;
-        setTimeout(() => { playButtonHandledRef.current = false; }, 300);
-        
-        console.log(`[play button] ${source} fired, playerReady:`, playerReady, 'hasPlayedRef:', hasPlayedRef.current);
-        setHasAudioEnabled(true);
-        hasAudioEnabledRef.current = true;
-        
-        // Unmute when enabling audio
-        if (isMuted && onMuteToggle) {
-            onMuteToggle();
-        }
-        
-        // Always try to play if player is ready
-        if (playerReady) {
-            if (!hasPlayedRef.current) {
-                console.log('[play button] Calling playSnippets()');
-                hasPlayedRef.current = true;
-                playSnippets();
-            } else {
-                console.log('[play button] Player already ready, attempting to play');
-                playSnippets();
+        if (window.__log) window.__log("PLAY: " + e.type);
+        try {
+            e.preventDefault();
+            e.stopPropagation();
+            e.nativeEvent?.stopImmediatePropagation?.();
+            
+            // Prevent double-firing
+            if (playButtonHandledRef.current) return;
+            playButtonHandledRef.current = true;
+            setTimeout(() => { playButtonHandledRef.current = false; }, 300);
+            
+            setDebug(`handler:${source}`);
+            console.log(`[play button] ${source} fired, playerReady:`, playerReady, 'hasPlayedRef:', hasPlayedRef.current);
+            setHasAudioEnabled(true);
+            hasAudioEnabledRef.current = true;
+            
+            // Unmute when enabling audio
+            if (isMuted && onMuteToggle) {
+                onMuteToggle();
             }
-        } else {
-            console.log('[play button] Player not ready yet, playerReady:', playerReady);
+            
+            // Always try to play if player is ready
+            if (playerReady) {
+                if (!hasPlayedRef.current) {
+                    console.log('[play button] Calling playSnippets()');
+                    hasPlayedRef.current = true;
+                    playSnippets();
+                } else {
+                    console.log('[play button] Player already ready, attempting to play');
+                    playSnippets();
+                }
+            } else {
+                setDebug(`handler:${source}:notReady`);
+                console.log('[play button] Player not ready yet, playerReady:', playerReady);
+            }
+        } catch (err) {
+            setDebug(`error:${err.message}`);
+            console.error('[play button] handler error:', err);
         }
     };
 
@@ -512,35 +526,45 @@ function AudioSnippetPlayer({ videoId, onComplete, onError, autoPlay = true, isM
                 <>
                     {/* Show play button on mobile before audio is enabled */}
                     {!hasAudioEnabled && IS_MOBILE && (
-                        <button
-                            type="button"
-                            onTouchStart={(e) => {
-                                // Don't preventDefault - we need the user gesture for YouTube audio
+                        <div
+                            data-no-swipe="true"
+                            onPointerDownCapture={(e) => {
                                 e.stopPropagation();
-                                e.stopImmediatePropagation();
                             }}
-                            onPointerDown={(e) => {
-                                e.preventDefault();
+                            onTouchStartCapture={(e) => {
                                 e.stopPropagation();
-                                e.stopImmediatePropagation();
                             }}
-                            onTouchEnd={(e) => {
-                                // onTouchEnd is more reliable than onClick on mobile Safari
-                                handlePlayButtonClick(e, 'onTouchEnd');
-                            }}
-                            onClick={(e) => {
-                                // onClick as fallback for desktop
-                                handlePlayButtonClick(e, 'onClick');
-                            }}
-                            className="p-1.5 rounded text-[#6b6570] hover:text-[#3d3a42] hover:bg-[#f5e6ed] transition-colors"
-                            aria-label="play audio"
-                            title="tap to play audio"
                         >
-                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                            </svg>
-                        </button>
+                            <button
+                                type="button"
+                                onTouchStart={(e) => {
+                                    // Don't preventDefault - we need the user gesture for YouTube audio
+                                    e.stopPropagation();
+                                    e.nativeEvent?.stopImmediatePropagation?.();
+                                }}
+                                onPointerDown={(e) => {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    e.nativeEvent?.stopImmediatePropagation?.();
+                                }}
+                                onTouchEnd={(e) => {
+                                    // onTouchEnd is more reliable than onClick on mobile Safari
+                                    handlePlayButtonClick(e, 'onTouchEnd');
+                                }}
+                                onClick={(e) => {
+                                    // onClick as fallback for desktop
+                                    handlePlayButtonClick(e, 'onClick');
+                                }}
+                                className="p-1.5 rounded text-[#6b6570] hover:text-[#3d3a42] hover:bg-[#f5e6ed] transition-colors"
+                                aria-label="play audio"
+                                title="tap to play audio"
+                            >
+                                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                </svg>
+                            </button>
+                        </div>
                     )}
                     {/* Show mute/unmute button after audio is enabled (or always on desktop) */}
                     {hasAudioEnabled && (
@@ -579,6 +603,25 @@ function AudioSnippetPlayer({ videoId, onComplete, onError, autoPlay = true, isM
             )}
             <div id={idBase.current + '-A'} style={{ position: 'absolute', left: '-9999px', width: IS_MOBILE ? 250 : 1, height: IS_MOBILE ? 250 : 1 }} />
             <div id={idBase.current + '-B'} style={{ position: 'absolute', left: '-9999px', width: IS_MOBILE ? 250 : 1, height: IS_MOBILE ? 250 : 1 }} />
+            {/* Debug badge */}
+            {IS_MOBILE && (
+                <div style={{
+                    position: 'fixed',
+                    top: '10px',
+                    right: '10px',
+                    background: 'rgba(0,0,0,0.8)',
+                    color: 'white',
+                    padding: '6px 10px',
+                    borderRadius: '4px',
+                    fontSize: '11px',
+                    fontFamily: 'monospace',
+                    zIndex: 9999,
+                    maxWidth: '200px',
+                    wordBreak: 'break-word'
+                }}>
+                    {debug}
+                </div>
+            )}
         </div>
     );
 }
@@ -594,13 +637,38 @@ function TrackCard({ track, onSwipe, style, showYouTube, onToggleYouTube, onSnip
     dragOffsetRef.current = dragOffset;
     
     const handlePointerDown = (e) => {
-        if (e.target.closest('button') || e.target.tagName === 'IFRAME') return;
-        e.currentTarget.setPointerCapture(e.pointerId);
-        startPosRef.current = { x: e.clientX, y: e.clientY };
-        dragOffsetRef.current = { x: 0, y: 0 };
-        hasDraggedRef.current = false;
-        setIsDragging(true);
-        setDragOffset({ x: 0, y: 0 });
+        try {
+            // Check for interactive elements - treat as non-swipe
+            const target = e.target;
+            if (!target) return;
+            
+            // Guard closest() - may not exist on SVG/path elements
+            const closestButton = target.closest ? target.closest('button') : null;
+            const closestLink = target.closest ? target.closest('a') : null;
+            const closestNoSwipe = target.closest ? target.closest('[data-no-swipe="true"]') : null;
+            
+            if (closestButton || closestLink || closestNoSwipe || target.tagName === 'IFRAME' || target.tagName === 'BUTTON' || target.tagName === 'A') {
+                return;
+            }
+            
+            // Guard setPointerCapture with pointerId check
+            if (e.pointerId != null && e.currentTarget && typeof e.currentTarget.setPointerCapture === 'function') {
+                try {
+                    e.currentTarget.setPointerCapture(e.pointerId);
+                } catch (captureErr) {
+                    // Ignore capture errors - continue with drag handling
+                }
+            }
+            
+            startPosRef.current = { x: e.clientX, y: e.clientY };
+            dragOffsetRef.current = { x: 0, y: 0 };
+            hasDraggedRef.current = false;
+            setIsDragging(true);
+            setDragOffset({ x: 0, y: 0 });
+        } catch (err) {
+            // Prevent crashes - silently ignore errors
+            console.error('[TrackCard] handlePointerDown error:', err);
+        }
     };
     
     useEffect(() => {
@@ -1054,6 +1122,7 @@ function ExportToYouTubeModal({ isOpen, onClose, likedTracks }) {
 
 // Vinyl Stack Sidebar
 function VinylStack({ currentList, savedPlaylists, onUpdatePlaylists }) {
+    const debugLogs = window.__DEBUG_LOGS__ || [];
     const [isOpen, setIsOpen] = useState(false);
     const [showExportModal, setShowExportModal] = useState(false);
     const [showSaveModal, setShowSaveModal] = useState(false);
@@ -1290,12 +1359,60 @@ function VinylStack({ currentList, savedPlaylists, onUpdatePlaylists }) {
                 onClose={() => setShowExportModal(false)}
                 likedTracks={activeTracks}
             />
+            
+            {/* Debug Overlay */}
+            {debugLogs.length > 0 && (
+                <div style={{
+                    position: 'fixed',
+                    bottom: '10px',
+                    left: '10px',
+                    right: '10px',
+                    maxHeight: '200px',
+                    overflowY: 'auto',
+                    background: 'rgba(0,0,0,0.9)',
+                    color: 'white',
+                    padding: '10px',
+                    borderRadius: '4px',
+                    fontSize: '10px',
+                    fontFamily: 'monospace',
+                    zIndex: 10000,
+                    wordBreak: 'break-word'
+                }}>
+                    <div style={{ fontWeight: 'bold', marginBottom: '5px' }}>Debug Logs (last 10):</div>
+                    {debugLogs.map((log, idx) => (
+                        <div key={idx} style={{ marginBottom: '2px', opacity: 0.9 }}>
+                            {log}
+                        </div>
+                    ))}
+                </div>
+            )}
         </>
     );
 }
 
 const PLAYLISTS_KEY = 'cosinder_playlists';
 const IS_MOBILE = /iPad|iPhone|iPod|Android/i.test(navigator.userAgent) || ('ontouchstart' in window);
+const FREEZE_DECK = true;
+
+// Initialize global debug logs
+if (typeof window !== 'undefined' && !window.__DEBUG_LOGS__) {
+    window.__DEBUG_LOGS__ = [];
+    window.__log = (msg) => {
+        const timestamp = new Date().toISOString();
+        window.__DEBUG_LOGS__.push(`[${timestamp}] ${msg}`);
+        if (window.__DEBUG_LOGS__.length > 50) {
+            window.__DEBUG_LOGS__.shift();
+        }
+    };
+    
+    window.addEventListener('error', (e) => {
+        window.__log("ERROR: " + e.message);
+    });
+    
+    window.addEventListener('unhandledrejection', (e) => {
+        window.__log("REJECT: " + (e.reason?.message || e.reason));
+    });
+}
 
 function loadPlaylists() {
     const saved = localStorage.getItem(PLAYLISTS_KEY);
@@ -1327,7 +1444,20 @@ function App() {
     const [hasStarted, setHasStarted] = useState(false);
     const [snippetComplete, setSnippetComplete] = useState(false);
     const [isMuted, setIsMuted] = useState(IS_MOBILE);
+    const [debugLogs, setDebugLogs] = useState([]);
     const seenTrackIdsRef = useRef(new Set());
+    
+    // Update debug logs from global array
+    useEffect(() => {
+        const updateLogs = () => {
+            if (window.__DEBUG_LOGS__) {
+                setDebugLogs([...window.__DEBUG_LOGS__].slice(-8));
+            }
+        };
+        updateLogs();
+        const interval = setInterval(updateLogs, 500);
+        return () => clearInterval(interval);
+    }, []);
     
     // Persist playlists to localStorage
     useEffect(() => {
@@ -1387,12 +1517,15 @@ function App() {
         setHasStarted(true);
         seenTrackIdsRef.current = new Set(); // Reset seen tracks for new session
         const similarTracks = await fetchSimilarTracks(track);
+        if (window.__log) window.__log("SEARCH_RESULTS len=" + similarTracks.length);
         setStack(similarTracks);
         setCurrentCardIndex(0);
         setSnippetComplete(false);
     };
     
     const handleSwipe = async (direction) => {
+        if (window.__log) window.__log("SWIPE_START");
+        
         if (!IS_MOBILE) setIsMuted(false);
         const currentTrack = stack[currentCardIndex];
         
@@ -1411,16 +1544,30 @@ function App() {
             // Fetch similar tracks and add to stack
             const similarTracks = await fetchSimilarTracks(currentTrack);
             
+            let newStackLength = 0;
             setStack(prev => {
                 const remaining = prev.slice(currentCardIndex + 1);
                 // Filter out tracks that have already been seen in this session
                 const newTracks = similarTracks.filter(track => !seenTrackIdsRef.current.has(track.id));
                 const combined = [...remaining, ...newTracks];
-                return shuffleArray(combined);
+                const shuffled = shuffleArray(combined);
+                newStackLength = shuffled.length;
+                return shuffled;
             });
+            if (window.__log) window.__log("DECK_ADVANCE index=0 len=" + newStackLength);
+            if (FREEZE_DECK) {
+                if (window.__log) window.__log("DECK_ADVANCE_BLOCKED");
+                return;
+            }
             setCurrentCardIndex(0);
         } else {
             // Dislike - just move to next
+            const newIndex = currentCardIndex + 1;
+            if (window.__log) window.__log("DECK_ADVANCE index=" + newIndex + " len=" + stack.length);
+            if (FREEZE_DECK) {
+                if (window.__log) window.__log("DECK_ADVANCE_BLOCKED");
+                return;
+            }
             setCurrentCardIndex(prev => prev + 1);
         }
         
@@ -1506,6 +1653,31 @@ function App() {
                     </div>
                 </div>
             )}
+            
+            {/* Debug Overlay */}
+            <div style={{
+                position: 'fixed',
+                top: '10px',
+                left: '10px',
+                maxWidth: '400px',
+                maxHeight: '200px',
+                overflowY: 'auto',
+                background: 'rgba(0,0,0,0.9)',
+                color: 'white',
+                padding: '10px',
+                borderRadius: '4px',
+                fontSize: '10px',
+                fontFamily: 'monospace',
+                zIndex: 999999,
+                wordBreak: 'break-word'
+            }}>
+                <div style={{ fontWeight: 'bold', marginBottom: '5px' }}>Debug Logs (last 8):</div>
+                {debugLogs.map((log, idx) => (
+                    <div key={idx} style={{ marginBottom: '2px', opacity: 0.9 }}>
+                        {log}
+                    </div>
+                ))}
+            </div>
         </div>
     );
 }
