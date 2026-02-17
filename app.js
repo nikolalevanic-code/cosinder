@@ -1,3 +1,75 @@
+// HARD DEBUG - Outside React, survives crashes
+(function() {
+    'use strict';
+    if (typeof window === 'undefined') return;
+    
+    // Initialize logs array
+    if (!window.__hard_logs__) {
+        window.__hard_logs__ = [];
+        // Load from localStorage
+        try {
+            const saved = localStorage.getItem('__hard_logs__');
+            if (saved) {
+                window.__hard_logs__ = JSON.parse(saved);
+            }
+        } catch (e) {}
+    }
+    
+    // Hard log function
+    window.__hardLog = function(msg) {
+        const timestamp = new Date().toISOString();
+        const entry = `[${timestamp}] ${msg}`;
+        window.__hard_logs__.push(entry);
+        if (window.__hard_logs__.length > 100) {
+            window.__hard_logs__.shift();
+        }
+        // Persist to localStorage
+        try {
+            localStorage.setItem('__hard_logs__', JSON.stringify(window.__hard_logs__));
+        } catch (e) {}
+        // Update overlay
+        updateHardDebugOverlay();
+    };
+    
+    // Update overlay function
+    function updateHardDebugOverlay() {
+        let overlay = document.getElementById('__hard_debug_overlay__');
+        if (!overlay) {
+            overlay = document.createElement('pre');
+            overlay.id = '__hard_debug_overlay__';
+            overlay.style.cssText = 'position:fixed;top:10px;left:10px;max-width:500px;max-height:300px;overflow:auto;background:rgba(0,0,0,0.95);color:#0f0;padding:10px;border:2px solid #0f0;border-radius:4px;font-size:10px;font-family:monospace;z-index:2147483647;word-break:break-word;white-space:pre-wrap;';
+            document.documentElement.appendChild(overlay);
+        }
+        const last8 = window.__hard_logs__.slice(-8);
+        overlay.textContent = 'HARD DEBUG (last 8):\n' + last8.join('\n');
+    }
+    
+    // Error handler
+    window.addEventListener('error', function(e) {
+        window.__hardLog('ERROR: ' + e.message + ' at ' + (e.filename || 'unknown') + ':' + (e.lineno || '?') + ':' + (e.colno || '?'));
+    });
+    
+    // Unhandled rejection handler
+    window.addEventListener('unhandledrejection', function(e) {
+        window.__hardLog('REJECT: ' + (e.reason?.message || e.reason || 'unknown'));
+    });
+    
+    // Pagehide handler (detect navigation/reload)
+    window.addEventListener('pagehide', function(e) {
+        window.__hardLog('PAGEHIDE: persisted=' + e.persisted);
+    });
+    
+    // Initial log
+    window.__hardLog('HARD_DEBUG_INIT');
+    
+    // Initial overlay render
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', updateHardDebugOverlay);
+    } else {
+        updateHardDebugOverlay();
+    }
+})();
+
 const { useState, useEffect, useRef } = React;
 
 // Utility: Parse cosine.club HTML responses
@@ -455,6 +527,7 @@ function AudioSnippetPlayer({ videoId, onComplete, onError, autoPlay = true, isM
 
     // Shared handler for play button (works for both touch and click)
     const handlePlayButtonClick = (e, source) => {
+        if (window.__hardLog) window.__hardLog("PLAY_HANDLER_FIRED type=" + e.type);
         if (window.__log) window.__log("PLAY: " + e.type);
         try {
             e.preventDefault();
@@ -1524,6 +1597,7 @@ function App() {
     };
     
     const handleSwipe = async (direction) => {
+        if (window.__hardLog) window.__hardLog("SWIPE_START");
         if (window.__log) window.__log("SWIPE_START");
         
         if (!IS_MOBILE) setIsMuted(false);
