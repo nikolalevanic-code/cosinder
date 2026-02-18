@@ -386,20 +386,93 @@ function AudioSnippetPlayer({ videoId, onComplete, onError, autoPlay = true, isM
         positionsRef.current = positions;
         activePlayerRef.current = 'A';
         const pb = playerBRef.current;
-        try {
-            if (window.__hardLog) window.__hardLog("PLAY_STEP: seekTo");
-            pa.seekTo(positions[0], true);
-            if (window.__hardLog) window.__hardLog("PLAY_STEP: setVolume");
-            pa.setVolume(isMutedRef.current ? 0 : 100);
-            setDebug("playSnippets:beforePlay");
-            if (window.__hardLog) window.__hardLog("PLAY_STEP: playVideo");
-            pa.playVideo();
-            setDebug("playSnippets:playCalled");
-            console.log('[snippets] playVideo called');
-        } catch (e) {
-            if (window.__hardLog) window.__hardLog("PLAY_ERROR: " + (e?.message || e));
-            setDebug(`error:${e.message}`);
-            console.error('[snippets] playVideo error:', e);
+        
+        // Guard: check if required methods exist
+        if (!pa.playVideo || typeof pa.playVideo !== 'function') {
+            if (window.__hardLog) window.__hardLog("PLAY_ERROR: player missing playVideo method");
+            setDebug("playSnippets:noPlayVideo");
+            console.log('[snippets] no playVideo method, returning');
+            return;
+        }
+        if (!pa.seekTo || typeof pa.seekTo !== 'function') {
+            if (window.__hardLog) window.__hardLog("PLAY_ERROR: player missing seekTo method");
+            setDebug("playSnippets:noSeekTo");
+            console.log('[snippets] no seekTo method, returning');
+            return;
+        }
+        if (!pa.setVolume || typeof pa.setVolume !== 'function') {
+            if (window.__hardLog) window.__hardLog("PLAY_ERROR: player missing setVolume method");
+            setDebug("playSnippets:noSetVolume");
+            console.log('[snippets] no setVolume method, returning');
+            return;
+        }
+        
+        if (IS_MOBILE) {
+            // iOS-safe call order: playVideo first, then seekTo after delay, then setVolume
+            try {
+                if (window.__hardLog) window.__hardLog("CALL: playVideo typeof=" + typeof pa.playVideo);
+                pa.playVideo();
+                setDebug("playSnippets:playCalled");
+                console.log('[snippets] playVideo called (iOS)');
+            } catch (e) {
+                if (window.__hardLog) window.__hardLog("PLAY_ERROR:playVideo " + (e?.message || e));
+                setDebug(`error:${e.message}`);
+                console.error('[snippets] playVideo error:', e);
+                return;
+            }
+            
+            // After delay, seek to position
+            setTimeout(() => {
+                try {
+                    if (window.__hardLog) window.__hardLog("CALL: seekTo typeof=" + typeof pa.seekTo);
+                    pa.seekTo(positions[0], true);
+                    console.log('[snippets] seekTo called (iOS)');
+                } catch (e) {
+                    if (window.__hardLog) window.__hardLog("PLAY_ERROR:seekTo " + (e?.message || e));
+                    console.error('[snippets] seekTo error:', e);
+                }
+                
+                // Set volume after seek
+                try {
+                    if (window.__hardLog) window.__hardLog("CALL: setVolume typeof=" + typeof pa.setVolume);
+                    pa.setVolume(isMutedRef.current ? 0 : 100);
+                    console.log('[snippets] setVolume called (iOS)');
+                } catch (e) {
+                    if (window.__hardLog) window.__hardLog("PLAY_ERROR:setVolume " + (e?.message || e));
+                    console.error('[snippets] setVolume error:', e);
+                }
+            }, 100);
+        } else {
+            // Desktop: original order with individual try/catch
+            try {
+                if (window.__hardLog) window.__hardLog("CALL: seekTo typeof=" + typeof pa.seekTo);
+                pa.seekTo(positions[0], true);
+            } catch (e) {
+                if (window.__hardLog) window.__hardLog("PLAY_ERROR:seekTo " + (e?.message || e));
+                setDebug(`error:${e.message}`);
+                console.error('[snippets] seekTo error:', e);
+            }
+            
+            try {
+                if (window.__hardLog) window.__hardLog("CALL: setVolume typeof=" + typeof pa.setVolume);
+                pa.setVolume(isMutedRef.current ? 0 : 100);
+            } catch (e) {
+                if (window.__hardLog) window.__hardLog("PLAY_ERROR:setVolume " + (e?.message || e));
+                setDebug(`error:${e.message}`);
+                console.error('[snippets] setVolume error:', e);
+            }
+            
+            try {
+                setDebug("playSnippets:beforePlay");
+                if (window.__hardLog) window.__hardLog("CALL: playVideo typeof=" + typeof pa.playVideo);
+                pa.playVideo();
+                setDebug("playSnippets:playCalled");
+                console.log('[snippets] playVideo called');
+            } catch (e) {
+                if (window.__hardLog) window.__hardLog("PLAY_ERROR:playVideo " + (e?.message || e));
+                setDebug(`error:${e.message}`);
+                console.error('[snippets] playVideo error:', e);
+            }
         }
         setCurrentSnippet(0);
 
