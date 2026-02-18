@@ -256,6 +256,7 @@ function AudioSnippetPlayer({ videoId, onComplete, onError, autoPlay = true, isM
     const pressedDotRef = useRef(null);
     const pressStartRef = useRef(0);
     const playButtonHandledRef = useRef(false);
+    const seekTimeoutRef = useRef(null);
 
     isMutedRef.current = isMuted ?? false;
     hasAudioEnabledRef.current = hasAudioEnabled;
@@ -337,6 +338,7 @@ function AudioSnippetPlayer({ videoId, onComplete, onError, autoPlay = true, isM
 
         return () => {
             if (snippetTimerRef.current) clearTimeout(snippetTimerRef.current);
+            if (seekTimeoutRef.current) clearTimeout(seekTimeoutRef.current);
             if (fadeIntervalRef.current && typeof fadeIntervalRef.current === 'function') fadeIntervalRef.current();
             [playerARef.current, playerBRef.current].forEach(p => {
                 if (p && p.destroy) try { p.destroy(); } catch (e) {}
@@ -409,6 +411,7 @@ function AudioSnippetPlayer({ videoId, onComplete, onError, autoPlay = true, isM
         
         if (IS_MOBILE) {
             // iOS-safe call order: playVideo first, then seekTo after delay, then setVolume
+            if (window.__hardLog) window.__hardLog("MUTE_STATE: " + (isMutedRef.current ? "muted" : "unmuted"));
             try {
                 if (window.__hardLog) window.__hardLog("CALL: playVideo typeof=" + typeof pa.playVideo);
                 pa.playVideo();
@@ -422,7 +425,8 @@ function AudioSnippetPlayer({ videoId, onComplete, onError, autoPlay = true, isM
             }
             
             // After delay, seek to position
-            setTimeout(() => {
+            if (seekTimeoutRef.current) clearTimeout(seekTimeoutRef.current);
+            seekTimeoutRef.current = setTimeout(() => {
                 try {
                     if (window.__hardLog) window.__hardLog("CALL: seekTo typeof=" + typeof pa.seekTo);
                     pa.seekTo(positions[0], true);
@@ -441,6 +445,7 @@ function AudioSnippetPlayer({ videoId, onComplete, onError, autoPlay = true, isM
                     if (window.__hardLog) window.__hardLog("PLAY_ERROR:setVolume " + (e?.message || e));
                     console.error('[snippets] setVolume error:', e);
                 }
+                seekTimeoutRef.current = null;
             }, 100);
         } else {
             // Desktop: original order with individual try/catch
