@@ -347,10 +347,18 @@ function AudioSnippetPlayer({ videoId, onComplete, onError, autoPlay = true, isM
     const playSnippets = async () => {
         setDebug("playSnippets:enter");
         console.log('[snippets] playSnippets called');
+        if (window.__hardLog) window.__hardLog("PLAY_STEP: getPlayer");
         const pa = playerARef.current;
-        if (!pa || !pa.getDuration) {
+        if (!pa) {
+            if (window.__hardLog) window.__hardLog("PLAY_ERROR: player undefined");
             setDebug("playSnippets:noPlayer");
-            console.log('[snippets] no player or getDuration, returning');
+            console.log('[snippets] no player, returning');
+            return;
+        }
+        if (!pa.getDuration) {
+            if (window.__hardLog) window.__hardLog("PLAY_ERROR: player missing getDuration");
+            setDebug("playSnippets:noPlayer");
+            console.log('[snippets] no getDuration, returning');
             return;
         }
         const duration = await new Promise((resolve) => {
@@ -379,13 +387,17 @@ function AudioSnippetPlayer({ videoId, onComplete, onError, autoPlay = true, isM
         activePlayerRef.current = 'A';
         const pb = playerBRef.current;
         try {
+            if (window.__hardLog) window.__hardLog("PLAY_STEP: seekTo");
             pa.seekTo(positions[0], true);
+            if (window.__hardLog) window.__hardLog("PLAY_STEP: setVolume");
             pa.setVolume(isMutedRef.current ? 0 : 100);
             setDebug("playSnippets:beforePlay");
+            if (window.__hardLog) window.__hardLog("PLAY_STEP: playVideo");
             pa.playVideo();
             setDebug("playSnippets:playCalled");
             console.log('[snippets] playVideo called');
         } catch (e) {
+            if (window.__hardLog) window.__hardLog("PLAY_ERROR: " + (e?.message || e));
             setDebug(`error:${e.message}`);
             console.error('[snippets] playVideo error:', e);
         }
@@ -564,6 +576,7 @@ function AudioSnippetPlayer({ videoId, onComplete, onError, autoPlay = true, isM
                 console.log('[play button] Player not ready yet, playerReady:', playerReady);
             }
         } catch (err) {
+            if (window.__hardLog) window.__hardLog("PLAY_ERROR: " + (err?.message || err));
             setDebug(`error:${err.message}`);
             console.error('[play button] handler error:', err);
         }
