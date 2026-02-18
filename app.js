@@ -300,7 +300,7 @@ function AudioSnippetPlayer({ videoId, onComplete, onError, autoPlay = true, isM
             const size = IS_MOBILE ? 250 : 1;
             const opts = {
                 height: String(size), width: String(size), videoId,
-                playerVars: { autoplay: 0, controls: 0, modestbranding: 1, playsinline: 1, enablejsapi: 1 },
+                playerVars: { autoplay: 0, controls: 0, modestbranding: 1, playsinline: 1, enablejsapi: 1, origin: window.location.origin, fs: 0 },
                 events: {
                     onReady: makeOnReady(),
                     onStateChange: (ev) => {
