@@ -59,6 +59,21 @@
         window.__hardLog('PAGEHIDE: persisted=' + e.persisted);
     });
     
+    // Visibility change handler
+    document.addEventListener('visibilitychange', function() {
+        window.__hardLog('VISIBILITY: ' + document.visibilityState);
+    });
+    
+    // Beforeunload handler
+    window.addEventListener('beforeunload', function() {
+        window.__hardLog('BEFOREUNLOAD');
+    });
+    
+    // Pageshow handler
+    window.addEventListener('pageshow', function(e) {
+        window.__hardLog('PAGESHOW persisted=' + e.persisted);
+    });
+    
     // Initial log
     window.__hardLog('HARD_DEBUG_INIT');
     
