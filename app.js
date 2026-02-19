@@ -427,6 +427,12 @@ function AudioSnippetPlayer({ videoId, onComplete, onError, autoPlay = true, isM
         if (IS_MOBILE) {
             // iOS-safe call order: playVideo first, then seekTo after delay, then setVolume
             if (window.__hardLog) window.__hardLog("MUTE_STATE: " + (isMutedRef.current ? "muted" : "unmuted"));
+            
+            // Force muted start on iOS to avoid Safari/YouTube instability
+            try { pa.mute?.(); } catch {}
+            try { pa.setVolume?.(0); } catch {}
+            if (window.__hardLog) window.__hardLog("IOS_START_MUTED");
+            
             try {
                 if (window.__hardLog) window.__hardLog("CALL: playVideo typeof=" + typeof pa.playVideo);
                 pa.playVideo();
@@ -437,6 +443,19 @@ function AudioSnippetPlayer({ videoId, onComplete, onError, autoPlay = true, isM
                 setDebug(`error:${e.message}`);
                 console.error('[snippets] playVideo error:', e);
                 return;
+            }
+            
+            // If user expects sound, unmute after delay
+            if (!isMutedRef.current) {
+                setTimeout(() => {
+                    try {
+                        pa.unMute?.();
+                        pa.setVolume?.(100);
+                        if (window.__hardLog) window.__hardLog("IOS_UNMUTED_AFTER_DELAY");
+                    } catch(e) {
+                        if (window.__hardLog) window.__hardLog("PLAY_ERROR:unmuteAfter " + (e?.message || e));
+                    }
+                }, 250);
             }
             
             // After delay, seek to position
