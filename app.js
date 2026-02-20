@@ -733,9 +733,14 @@ function AudioSnippetPlayer({ videoId, onComplete, onError, autoPlay = true, isM
             }
             
             // Update UI state after playVideo call
+            // Defer setHasAudioEnabled to prevent Safari Script error during re-render
             const wasAudioDisabled = !hasAudioEnabledRef.current;
-            setHasAudioEnabled(true);
-            hasAudioEnabledRef.current = true;
+            hasAudioEnabledRef.current = true; // Update ref immediately for logic checks
+            // Defer state update to avoid React re-render during playVideo() initialization
+            requestAnimationFrame(() => {
+                setHasAudioEnabled(true);
+                if (window.__hardLog) window.__hardLog("PLAY_STATE: setHasAudioEnabled deferred via RAF");
+            });
             
             // OPTION 1: Skip onMuteToggle on first tap to avoid immediate setVolume() call
             // Volume will be set in playSnippets() after delay when player is ready
