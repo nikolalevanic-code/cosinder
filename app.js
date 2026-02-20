@@ -272,6 +272,7 @@ function AudioSnippetPlayer({ videoId, onComplete, onError, autoPlay = true, isM
     const pressStartRef = useRef(0);
     const playButtonHandledRef = useRef(false);
     const seekTimeoutRef = useRef(null);
+    const unmuteTimeoutRef = useRef(null);
 
     isMutedRef.current = isMuted ?? false;
     hasAudioEnabledRef.current = hasAudioEnabled;
@@ -354,6 +355,7 @@ function AudioSnippetPlayer({ videoId, onComplete, onError, autoPlay = true, isM
         return () => {
             if (snippetTimerRef.current) clearTimeout(snippetTimerRef.current);
             if (seekTimeoutRef.current) clearTimeout(seekTimeoutRef.current);
+            if (unmuteTimeoutRef.current) clearTimeout(unmuteTimeoutRef.current);
             if (fadeIntervalRef.current && typeof fadeIntervalRef.current === 'function') fadeIntervalRef.current();
             [playerARef.current, playerBRef.current].forEach(p => {
                 if (p && p.destroy) try { p.destroy(); } catch (e) {}
@@ -435,6 +437,10 @@ function AudioSnippetPlayer({ videoId, onComplete, onError, autoPlay = true, isM
             
             try {
                 if (window.__hardLog) window.__hardLog("CALL: playVideo typeof=" + typeof pa.playVideo);
+                if (!pa || typeof pa.playVideo !== 'function') {
+                    if (window.__hardLog) window.__hardLog("PLAY_ERROR:playVideo player invalid");
+                    return;
+                }
                 pa.playVideo();
                 setDebug("playSnippets:playCalled");
                 console.log('[snippets] playVideo called (iOS)');
@@ -447,14 +453,26 @@ function AudioSnippetPlayer({ videoId, onComplete, onError, autoPlay = true, isM
             
             // If user expects sound, unmute after delay
             if (!isMutedRef.current) {
-                setTimeout(() => {
+                if (unmuteTimeoutRef.current) clearTimeout(unmuteTimeoutRef.current);
+                unmuteTimeoutRef.current = setTimeout(() => {
+                    const currentPa = playerARef.current;
+                    if (!currentPa) {
+                        if (window.__hardLog) window.__hardLog("PLAY_ERROR:unmuteAfter player destroyed");
+                        unmuteTimeoutRef.current = null;
+                        return;
+                    }
                     try {
-                        pa.unMute?.();
-                        pa.setVolume?.(100);
+                        if (currentPa.unMute && typeof currentPa.unMute === 'function') {
+                            currentPa.unMute();
+                        }
+                        if (currentPa.setVolume && typeof currentPa.setVolume === 'function') {
+                            currentPa.setVolume(100);
+                        }
                         if (window.__hardLog) window.__hardLog("IOS_UNMUTED_AFTER_DELAY");
                     } catch(e) {
                         if (window.__hardLog) window.__hardLog("PLAY_ERROR:unmuteAfter " + (e?.message || e));
                     }
+                    unmuteTimeoutRef.current = null;
                 }, 250);
             }
             
