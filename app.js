@@ -699,12 +699,14 @@ function AudioSnippetPlayer({ videoId, onComplete, onError, autoPlay = true, isM
             // Always try to play if player is ready
             if (playerReady) {
                 if (!hasPlayedRef.current) {
-                    console.log('[play button] Calling playSnippets()');
+                    console.log('[play button] Calling playSnippets() (deferred)');
                     hasPlayedRef.current = true;
-                    playSnippets();
+                    // Defer playSnippets to run after React flushes state updates
+                    setTimeout(() => { playSnippets(); }, 0);
                 } else {
-                    console.log('[play button] Player already ready, attempting to play');
-                    playSnippets();
+                    console.log('[play button] Player already ready, attempting to play (deferred)');
+                    // Defer playSnippets to run after React flushes state updates
+                    setTimeout(() => { playSnippets(); }, 0);
                 }
             } else {
                 setDebug(`handler:${source}:notReady`);
