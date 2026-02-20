@@ -450,16 +450,24 @@ function AudioSnippetPlayer({ videoId, onComplete, onError, autoPlay = true, isM
             }
             
             try {
-                if (window.__hardLog) window.__hardLog("CALL: playVideo typeof=" + typeof currentPa.playVideo);
-                if (!currentPa || typeof currentPa.playVideo !== 'function') {
-                    if (window.__hardLog) window.__hardLog("PLAY_ERROR:playVideo player invalid");
-                    return;
+                // Skip playVideo if already called immediately in button handler
+                if (hasPlayedRef.current) {
+                    if (window.__hardLog) window.__hardLog("PLAY_STEP: skipping playVideo (already called immediately)");
+                    setDebug("playSnippets:playCalled");
+                    console.log('[snippets] playVideo already called (iOS)');
+                } else {
+                    if (window.__hardLog) window.__hardLog("CALL: playVideo typeof=" + typeof currentPa.playVideo);
+                    if (!currentPa || typeof currentPa.playVideo !== 'function') {
+                        if (window.__hardLog) window.__hardLog("PLAY_ERROR:playVideo player invalid");
+                        return;
+                    }
+                    if (window.__hardLog) window.__hardLog("PLAY_STEP: about to call playVideo");
+                    currentPa.playVideo();
+                    if (window.__hardLog) window.__hardLog("PLAY_STEP: playVideo called successfully");
+                    hasPlayedRef.current = true;
+                    setDebug("playSnippets:playCalled");
+                    console.log('[snippets] playVideo called (iOS)');
                 }
-                if (window.__hardLog) window.__hardLog("PLAY_STEP: about to call playVideo");
-                currentPa.playVideo();
-                if (window.__hardLog) window.__hardLog("PLAY_STEP: playVideo called successfully");
-                setDebug("playSnippets:playCalled");
-                console.log('[snippets] playVideo called (iOS)');
             } catch (e) {
                 if (window.__hardLog) window.__hardLog("PLAY_ERROR:playVideo " + (e?.message || e || 'unknown'));
                 setDebug(`error:${e?.message || 'playVideo failed'}`);
@@ -702,42 +710,53 @@ function AudioSnippetPlayer({ videoId, onComplete, onError, autoPlay = true, isM
             setDebug(`handler:${source}`);
             console.log(`[play button] ${source} fired, playerReady:`, playerReady, 'hasPlayedRef:', hasPlayedRef.current);
             if (window.__hardLog) window.__hardLog("PLAY_BUTTON: playerReady=" + playerReady + " hasPlayed=" + hasPlayedRef.current);
+            
+            // EXPERIMENT: Call playVideo IMMEDIATELY before any setState to preserve user gesture
+            if (playerReady) {
+                const pa = playerARef.current;
+                if (pa && typeof pa.playVideo === 'function') {
+                    try {
+                        if (window.__hardLog) window.__hardLog("PLAY_IMMEDIATE: calling playVideo before setState");
+                        pa.playVideo();
+                        if (window.__hardLog) window.__hardLog("PLAY_IMMEDIATE: playVideo called successfully");
+                        hasPlayedRef.current = true;
+                    } catch (e) {
+                        if (window.__hardLog) window.__hardLog("PLAY_ERROR: immediate playVideo " + (e?.message || e || 'unknown'));
+                        console.error('[play button] immediate playVideo error:', e);
+                    }
+                } else {
+                    if (window.__hardLog) window.__hardLog("PLAY_ERROR: immediate playVideo - player invalid");
+                }
+            }
+            
+            // Update UI state after playVideo call
             setHasAudioEnabled(true);
             hasAudioEnabledRef.current = true;
             
             // Unmute when enabling audio
             if (isMuted && onMuteToggle) {
-                onMuteToggle();
+                try {
+                    if (window.__hardLog) window.__hardLog("PLAY_STATE: calling onMuteToggle");
+                    onMuteToggle();
+                } catch (e) {
+                    if (window.__hardLog) window.__hardLog("PLAY_ERROR: onMuteToggle " + (e?.message || e || 'unknown'));
+                }
             }
             
-            // Always try to play if player is ready
+            // Schedule playSnippets to do seek/volume setup after state updates
             if (playerReady) {
                 const wasReady = playerReady; // Capture state in closure
-                if (window.__hardLog) window.__hardLog("PLAY_BUTTON: scheduling deferred playSnippets");
-                if (!hasPlayedRef.current) {
-                    console.log('[play button] Calling playSnippets() (deferred)');
-                    hasPlayedRef.current = true;
-                    // Use requestAnimationFrame to preserve user gesture and run after React flush
-                    requestAnimationFrame(() => {
-                        if (window.__hardLog) window.__hardLog("PLAY_RAF_CALLBACK: wasReady=" + wasReady + " nowReady=" + playerReady);
-                        if (!playerReady) {
-                            if (window.__hardLog) window.__hardLog("PLAY_ERROR: playerReady became false during RAF");
-                            return;
-                        }
-                        playSnippets();
-                    });
-                } else {
-                    console.log('[play button] Player already ready, attempting to play (deferred)');
-                    // Use requestAnimationFrame to preserve user gesture and run after React flush
-                    requestAnimationFrame(() => {
-                        if (window.__hardLog) window.__hardLog("PLAY_RAF_CALLBACK: wasReady=" + wasReady + " nowReady=" + playerReady);
-                        if (!playerReady) {
-                            if (window.__hardLog) window.__hardLog("PLAY_ERROR: playerReady became false during RAF");
-                            return;
-                        }
-                        playSnippets();
-                    });
-                }
+                if (window.__hardLog) window.__hardLog("PLAY_BUTTON: scheduling playSnippets for seek/volume");
+                // Use requestAnimationFrame to run after React flush
+                requestAnimationFrame(() => {
+                    if (window.__hardLog) window.__hardLog("PLAY_RAF_CALLBACK: wasReady=" + wasReady + " nowReady=" + playerReady);
+                    if (!playerReady) {
+                        if (window.__hardLog) window.__hardLog("PLAY_ERROR: playerReady became false during RAF");
+                        return;
+                    }
+                    // playSnippets will handle seek/volume, but playVideo already called
+                    playSnippets();
+                });
             } else {
                 setDebug(`handler:${source}:notReady`);
                 console.log('[play button] Player not ready yet, playerReady:', playerReady);
