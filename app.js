@@ -293,6 +293,7 @@ function AudioSnippetPlayer({ videoId, onComplete, onError, autoPlay = true, isM
         setHasAudioEnabled(initialAudioEnabled); // Reset to initial state: false on mobile, true on desktop
         hasAudioEnabledRef.current = initialAudioEnabled;
         playersReadyRef.current = 0;
+        isInitialPlaybackSetupRef.current = false; // Reset guard flag for new video
 
         const initPlayer = () => {
             if (typeof YT === 'undefined' || !YT.Player) {
@@ -476,56 +477,43 @@ function AudioSnippetPlayer({ videoId, onComplete, onError, autoPlay = true, isM
                 return;
             }
             
-            if (false) {
-                // If user expects sound, unmute after delay
-                if (!isMutedRef.current) {
-                    if (unmuteTimeoutRef.current) clearTimeout(unmuteTimeoutRef.current);
-                    unmuteTimeoutRef.current = setTimeout(() => {
-                        const currentPa = playerARef.current;
-                        if (!currentPa) {
-                            if (window.__hardLog) window.__hardLog("PLAY_ERROR:unmuteAfter player destroyed");
-                            unmuteTimeoutRef.current = null;
-                            return;
-                        }
-                        try {
-                            if (currentPa.unMute && typeof currentPa.unMute === 'function') {
-                                currentPa.unMute();
-                            }
-                            if (currentPa.setVolume && typeof currentPa.setVolume === 'function') {
-                                currentPa.setVolume(100);
-                            }
-                            if (window.__hardLog) window.__hardLog("IOS_UNMUTED_AFTER_DELAY");
-                        } catch(e) {
-                            if (window.__hardLog) window.__hardLog("PLAY_ERROR:unmuteAfter " + (e?.message || e));
-                        }
-                        unmuteTimeoutRef.current = null;
-                    }, 250);
+            // After delay, seek to position and set volume (when player is ready)
+            if (seekTimeoutRef.current) clearTimeout(seekTimeoutRef.current);
+            seekTimeoutRef.current = setTimeout(() => {
+                const currentPa = playerARef.current;
+                if (!currentPa) {
+                    if (window.__hardLog) window.__hardLog("PLAY_ERROR:seekTo player destroyed");
+                    seekTimeoutRef.current = null;
+                    isInitialPlaybackSetupRef.current = false; // Clear guard flag
+                    return;
                 }
                 
-                // After delay, seek to position
-                if (seekTimeoutRef.current) clearTimeout(seekTimeoutRef.current);
-                seekTimeoutRef.current = setTimeout(() => {
-                    try {
-                        if (window.__hardLog) window.__hardLog("CALL: seekTo typeof=" + typeof pa.seekTo);
-                        pa.seekTo(positions[0], true);
-                        console.log('[snippets] seekTo called (iOS)');
-                    } catch (e) {
-                        if (window.__hardLog) window.__hardLog("PLAY_ERROR:seekTo " + (e?.message || e));
-                        console.error('[snippets] seekTo error:', e);
-                    }
-                    
-                    // Set volume after seek
-                    try {
-                        if (window.__hardLog) window.__hardLog("CALL: setVolume typeof=" + typeof pa.setVolume);
-                        pa.setVolume(isMutedRef.current ? 0 : 100);
-                        console.log('[snippets] setVolume called (iOS)');
-                    } catch (e) {
-                        if (window.__hardLog) window.__hardLog("PLAY_ERROR:setVolume " + (e?.message || e));
-                        console.error('[snippets] setVolume error:', e);
-                    }
-                    seekTimeoutRef.current = null;
-                }, 100);
-            }
+                try {
+                    if (window.__hardLog) window.__hardLog("CALL: seekTo typeof=" + typeof currentPa.seekTo);
+                    currentPa.seekTo(positions[0], true);
+                    console.log('[snippets] seekTo called (iOS)');
+                } catch (e) {
+                    if (window.__hardLog) window.__hardLog("PLAY_ERROR:seekTo " + (e?.message || e));
+                    console.error('[snippets] seekTo error:', e);
+                }
+                
+                // Set volume after seek (when player is ready) - this is safe now
+                try {
+                    const targetVolume = isMutedRef.current ? 0 : 100;
+                    if (window.__hardLog) window.__hardLog("CALL: setVolume typeof=" + typeof currentPa.setVolume + " volume=" + targetVolume);
+                    currentPa.setVolume(targetVolume);
+                    console.log('[snippets] setVolume called (iOS) to ' + targetVolume);
+                    // Clear guard flag after successful volume set - useEffect can now handle volume changes
+                    isInitialPlaybackSetupRef.current = false;
+                    if (window.__hardLog) window.__hardLog("PLAY_STEP: initial playback setup complete, guard flag cleared");
+                } catch (e) {
+                    if (window.__hardLog) window.__hardLog("PLAY_ERROR:setVolume " + (e?.message || e));
+                    console.error('[snippets] setVolume error:', e);
+                    // Clear guard flag even on error so we don't get stuck
+                    isInitialPlaybackSetupRef.current = false;
+                }
+                seekTimeoutRef.current = null;
+            }, 150); // Slightly longer delay to ensure player is ready
         } else {
             // Desktop: original order with individual try/catch
             try {
