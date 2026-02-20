@@ -367,20 +367,20 @@ function AudioSnippetPlayer({ videoId, onComplete, onError, autoPlay = true, isM
 
     const playSnippets = async () => {
         if (window.__hardLog) window.__hardLog("PLAYSNIPPETS_ENTER");
-        setDebug("playSnippets:enter");
+        requestAnimationFrame(() => { setDebug("playSnippets:enter"); });
         console.log('[snippets] playSnippets called');
         if (window.__hardLog) window.__hardLog("PLAY_STEP: getPlayer");
         const pa = playerARef.current;
         if (window.__hardLog) window.__hardLog("PLAY_STEP: gotPlayer pa=" + (pa ? "exists" : "null"));
         if (!pa) {
             if (window.__hardLog) window.__hardLog("PLAY_ERROR: player undefined");
-            setDebug("playSnippets:noPlayer");
+            requestAnimationFrame(() => { setDebug("playSnippets:noPlayer"); });
             console.log('[snippets] no player, returning');
             return;
         }
         if (!pa.getDuration) {
             if (window.__hardLog) window.__hardLog("PLAY_ERROR: player missing getDuration");
-            setDebug("playSnippets:noPlayer");
+            requestAnimationFrame(() => { setDebug("playSnippets:noPlayer"); });
             console.log('[snippets] no getDuration, returning');
             return;
         }
@@ -415,19 +415,19 @@ function AudioSnippetPlayer({ videoId, onComplete, onError, autoPlay = true, isM
         // Guard: check if required methods exist
         if (!pa.playVideo || typeof pa.playVideo !== 'function') {
             if (window.__hardLog) window.__hardLog("PLAY_ERROR: player missing playVideo method");
-            setDebug("playSnippets:noPlayVideo");
+            requestAnimationFrame(() => { setDebug("playSnippets:noPlayVideo"); });
             console.log('[snippets] no playVideo method, returning');
             return;
         }
         if (!pa.seekTo || typeof pa.seekTo !== 'function') {
             if (window.__hardLog) window.__hardLog("PLAY_ERROR: player missing seekTo method");
-            setDebug("playSnippets:noSeekTo");
+            requestAnimationFrame(() => { setDebug("playSnippets:noSeekTo"); });
             console.log('[snippets] no seekTo method, returning');
             return;
         }
         if (!pa.setVolume || typeof pa.setVolume !== 'function') {
             if (window.__hardLog) window.__hardLog("PLAY_ERROR: player missing setVolume method");
-            setDebug("playSnippets:noSetVolume");
+            requestAnimationFrame(() => { setDebug("playSnippets:noSetVolume"); });
             console.log('[snippets] no setVolume method, returning');
             return;
         }
@@ -455,7 +455,7 @@ function AudioSnippetPlayer({ videoId, onComplete, onError, autoPlay = true, isM
                 // Skip playVideo if already called immediately in button handler
                 if (hasPlayedRef.current) {
                     if (window.__hardLog) window.__hardLog("PLAY_STEP: skipping playVideo (already called immediately)");
-                    setDebug("playSnippets:playCalled");
+                    requestAnimationFrame(() => { setDebug("playSnippets:playCalled"); });
                     console.log('[snippets] playVideo already called (iOS)');
                 } else {
                     if (window.__hardLog) window.__hardLog("CALL: playVideo typeof=" + typeof currentPa.playVideo);
@@ -467,12 +467,12 @@ function AudioSnippetPlayer({ videoId, onComplete, onError, autoPlay = true, isM
                     currentPa.playVideo();
                     if (window.__hardLog) window.__hardLog("PLAY_STEP: playVideo called successfully");
                     hasPlayedRef.current = true;
-                    setDebug("playSnippets:playCalled");
+                    requestAnimationFrame(() => { setDebug("playSnippets:playCalled"); });
                     console.log('[snippets] playVideo called (iOS)');
                 }
             } catch (e) {
                 if (window.__hardLog) window.__hardLog("PLAY_ERROR:playVideo " + (e?.message || e || 'unknown'));
-                setDebug(`error:${e?.message || 'playVideo failed'}`);
+                requestAnimationFrame(() => { setDebug(`error:${e?.message || 'playVideo failed'}`); });
                 console.error('[snippets] playVideo error:', e);
                 return;
             }
@@ -521,7 +521,7 @@ function AudioSnippetPlayer({ videoId, onComplete, onError, autoPlay = true, isM
                 pa.seekTo(positions[0], true);
             } catch (e) {
                 if (window.__hardLog) window.__hardLog("PLAY_ERROR:seekTo " + (e?.message || e));
-                setDebug(`error:${e.message}`);
+                requestAnimationFrame(() => { setDebug(`error:${e.message}`); });
                 console.error('[snippets] seekTo error:', e);
             }
             
@@ -530,19 +530,19 @@ function AudioSnippetPlayer({ videoId, onComplete, onError, autoPlay = true, isM
                 pa.setVolume(isMutedRef.current ? 0 : 100);
             } catch (e) {
                 if (window.__hardLog) window.__hardLog("PLAY_ERROR:setVolume " + (e?.message || e));
-                setDebug(`error:${e.message}`);
+                requestAnimationFrame(() => { setDebug(`error:${e.message}`); });
                 console.error('[snippets] setVolume error:', e);
             }
             
             try {
-                setDebug("playSnippets:beforePlay");
+                requestAnimationFrame(() => { setDebug("playSnippets:beforePlay"); });
                 if (window.__hardLog) window.__hardLog("CALL: playVideo typeof=" + typeof pa.playVideo);
                 pa.playVideo();
-                setDebug("playSnippets:playCalled");
+                requestAnimationFrame(() => { setDebug("playSnippets:playCalled"); });
                 console.log('[snippets] playVideo called');
             } catch (e) {
                 if (window.__hardLog) window.__hardLog("PLAY_ERROR:playVideo " + (e?.message || e));
-                setDebug(`error:${e.message}`);
+                requestAnimationFrame(() => { setDebug(`error:${e.message}`); });
                 console.error('[snippets] playVideo error:', e);
             }
         }
