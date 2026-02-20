@@ -20,7 +20,7 @@
         const timestamp = new Date().toISOString();
         const entry = `[${timestamp}] ${msg}`;
         window.__hard_logs__.push(entry);
-        if (window.__hard_logs__.length > 100) {
+        if (window.__hard_logs__.length > 200) {
             window.__hard_logs__.shift();
         }
         // Persist to localStorage
@@ -40,8 +40,8 @@
             overlay.style.cssText = 'position:fixed;top:10px;left:10px;max-width:500px;max-height:300px;overflow:auto;background:rgba(0,0,0,0.95);color:#0f0;padding:10px;border:2px solid #0f0;border-radius:4px;font-size:10px;font-family:monospace;z-index:2147483647;word-break:break-word;white-space:pre-wrap;';
             document.documentElement.appendChild(overlay);
         }
-        const last8 = window.__hard_logs__.slice(-8);
-        overlay.textContent = 'HARD DEBUG (last 8):\n' + last8.join('\n');
+        const last25 = window.__hard_logs__.slice(-25);
+        overlay.textContent = 'HARD DEBUG (last 25):\n' + last25.join('\n');
     }
     
     // Error handler
