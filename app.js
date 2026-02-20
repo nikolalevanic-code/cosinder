@@ -46,7 +46,11 @@
     
     // Error handler
     window.addEventListener('error', function(e) {
-        window.__hardLog('ERROR: ' + e.message + ' at ' + (e.filename || 'unknown') + ':' + (e.lineno || '?') + ':' + (e.colno || '?'));
+        window.__hardLog('ERROR: ' + e.message + ' filename=' + (e.filename || 'unknown') + ' lineno=' + (e.lineno || '?') + ' colno=' + (e.colno || '?'));
+        // Diagnostic: Log if this is a Script error
+        if (e.message === 'Script error.' || e.message.includes('Script error')) {
+            window.__hardLog('SCRIPT_ERROR_DETECTED: This is a cross-origin Script error');
+        }
     });
     
     // Unhandled rejection handler
@@ -714,21 +718,24 @@ function AudioSnippetPlayer({ videoId, onComplete, onError, autoPlay = true, isM
             console.log(`[play button] ${source} fired, playerReady:`, playerReady, 'hasPlayedRef:', hasPlayedRef.current);
             if (window.__hardLog) window.__hardLog("PLAY_BUTTON: playerReady=" + playerReady + " hasPlayed=" + hasPlayedRef.current);
             
-            // EXPERIMENT: Call playVideo IMMEDIATELY before any setState to preserve user gesture
+            // Defer playVideo() call to allow iframe initialization time (preserves user gesture via RAF)
             if (playerReady) {
                 const pa = playerARef.current;
                 if (pa && typeof pa.playVideo === 'function') {
-                    try {
-                        if (window.__hardLog) window.__hardLog("PLAY_IMMEDIATE: calling playVideo before setState");
-                        pa.playVideo();
-                        if (window.__hardLog) window.__hardLog("PLAY_IMMEDIATE: playVideo called successfully");
-                        hasPlayedRef.current = true;
-                    } catch (e) {
-                        if (window.__hardLog) window.__hardLog("PLAY_ERROR: immediate playVideo " + (e?.message || e || 'unknown'));
-                        console.error('[play button] immediate playVideo error:', e);
-                    }
+                    if (window.__hardLog) window.__hardLog("PLAY_DEFERRED: scheduling playVideo via RAF");
+                    requestAnimationFrame(() => {
+                        try {
+                            if (window.__hardLog) window.__hardLog("PLAY_DEFERRED: calling playVideo after RAF");
+                            pa.playVideo();
+                            if (window.__hardLog) window.__hardLog("PLAY_DEFERRED: playVideo called successfully");
+                            hasPlayedRef.current = true;
+                        } catch (e) {
+                            if (window.__hardLog) window.__hardLog("PLAY_ERROR: deferred playVideo " + (e?.message || e || 'unknown'));
+                            console.error('[play button] deferred playVideo error:', e);
+                        }
+                    });
                 } else {
-                    if (window.__hardLog) window.__hardLog("PLAY_ERROR: immediate playVideo - player invalid");
+                    if (window.__hardLog) window.__hardLog("PLAY_ERROR: deferred playVideo - player invalid");
                 }
             }
             
@@ -924,6 +931,19 @@ function TrackCard({ track, onSwipe, style, showYouTube, onToggleYouTube, onSnip
     const dragOffsetRef = useRef({ x: 0, y: 0 });
     const hasDraggedRef = useRef(false);
     dragOffsetRef.current = dragOffset;
+    
+    // Diagnostic logging: Track component mount/unmount
+    useEffect(() => {
+        if (window.__hardLog) window.__hardLog("TRACKCARD_MOUNT: trackId=" + (track?.id || 'null') + " name=" + (track?.name || 'null'));
+        return () => {
+            if (window.__hardLog) window.__hardLog("TRACKCARD_UNMOUNT: trackId=" + (track?.id || 'null') + " name=" + (track?.name || 'null'));
+        };
+    }, [track?.id, track?.name]);
+    
+    // Diagnostic logging: Track component render
+    useEffect(() => {
+        if (window.__hardLog) window.__hardLog("TRACKCARD_RENDER: trackId=" + (track?.id || 'null'));
+    });
     
     const handlePointerDown = (e) => {
         try {
@@ -1813,8 +1833,18 @@ function App() {
     };
     
     const handleSwipe = async (direction) => {
-        if (window.__hardLog) window.__hardLog("SWIPE_START");
+        if (window.__hardLog) window.__hardLog("SWIPE_START: direction=" + direction + " currentCardIndex=" + currentCardIndex + " stackLen=" + stack.length + " trackId=" + (stack[currentCardIndex]?.id || 'null'));
         if (window.__log) window.__log("SWIPE_START");
+        
+        // Diagnostic: Log stack trace to see what called handleSwipe
+        if (window.__hardLog) {
+            try {
+                throw new Error("SWIPE_CALL_STACK");
+            } catch (e) {
+                const stackLines = (e.stack || 'no stack').split('\n').slice(0, 5).join(' | ');
+                window.__hardLog("SWIPE_CALL_STACK: " + stackLines);
+            }
+        }
         
         if (!IS_MOBILE) setIsMuted(false);
         const currentTrack = stack[currentCardIndex];
@@ -1845,20 +1875,26 @@ function App() {
                 return shuffled;
             });
             if (window.__log) window.__log("DECK_ADVANCE index=0 len=" + newStackLength);
+            if (window.__hardLog) window.__hardLog("SWIPE_RIGHT: about to set currentCardIndex=0 newStackLen=" + newStackLength);
             if (FREEZE_DECK) {
                 if (window.__log) window.__log("DECK_ADVANCE_BLOCKED");
+                if (window.__hardLog) window.__hardLog("SWIPE_RIGHT_BLOCKED: FREEZE_DECK=true");
                 return;
             }
             setCurrentCardIndex(0);
+            if (window.__hardLog) window.__hardLog("SWIPE_RIGHT: setCurrentCardIndex(0) called");
         } else {
             // Dislike - just move to next
             const newIndex = currentCardIndex + 1;
             if (window.__log) window.__log("DECK_ADVANCE index=" + newIndex + " len=" + stack.length);
+            if (window.__hardLog) window.__hardLog("SWIPE_LEFT: about to set currentCardIndex=" + newIndex + " stackLen=" + stack.length);
             if (FREEZE_DECK) {
                 if (window.__log) window.__log("DECK_ADVANCE_BLOCKED");
+                if (window.__hardLog) window.__hardLog("SWIPE_LEFT_BLOCKED: FREEZE_DECK=true");
                 return;
             }
             setCurrentCardIndex(prev => prev + 1);
+            if (window.__hardLog) window.__hardLog("SWIPE_LEFT: setCurrentCardIndex(prev => prev + 1) called");
         }
         
         setShowYouTube(false);
@@ -1866,14 +1902,26 @@ function App() {
     };
     
     const handleVideoError = (errorCode) => {
+        if (window.__hardLog) window.__hardLog("VIDEO_ERROR: errorCode=" + errorCode + " currentCardIndex=" + currentCardIndex + " stackLen=" + stack.length);
         console.log('Video unavailable (error code:', errorCode, '), auto-skipping...');
         // Auto-skip to next track (swipe left)
         setTimeout(() => {
+            if (window.__hardLog) window.__hardLog("VIDEO_ERROR: calling handleSwipe('left') after 500ms");
             handleSwipe('left');
         }, 500); // Small delay to show the error state
     };
     
     const currentTrack = stack[currentCardIndex];
+    
+    // Diagnostic logging: App render state
+    useEffect(() => {
+        if (window.__hardLog) window.__hardLog("APP_RENDER: currentCardIndex=" + currentCardIndex + " stackLen=" + stack.length + " currentTrack=" + (currentTrack?.id || 'null') + " hasStarted=" + hasStarted + " loading=" + loading);
+    });
+    
+    // Diagnostic logging: Track changes
+    useEffect(() => {
+        if (window.__hardLog) window.__hardLog("TRACK_CHANGE: currentCardIndex=" + currentCardIndex + " trackId=" + (currentTrack?.id || 'null') + " trackName=" + (currentTrack?.name || 'null'));
+    }, [currentCardIndex, currentTrack?.id]);
     
     return (
         <div className="min-h-screen flex flex-col items-center justify-center p-8 bg-[#fdf8f8]">
@@ -1897,6 +1945,8 @@ function App() {
             )}
             
             {/* Card Stack */}
+            {!loading && !currentTrack && window.__hardLog && window.__hardLog("APP_RENDER_NO_CARD: currentCardIndex=" + currentCardIndex + " stackLen=" + stack.length + " hasStarted=" + hasStarted + " loading=" + loading)}
+            {!loading && currentTrack && window.__hardLog && window.__hardLog("APP_RENDER_CARD: rendering TrackCard trackId=" + currentTrack.id + " currentCardIndex=" + currentCardIndex)}
             {!loading && currentTrack && (
                 <div className="card-stack relative">
                     <TrackCard
@@ -1904,7 +1954,10 @@ function App() {
                         onSwipe={handleSwipe}
                         showYouTube={showYouTube}
                         onToggleYouTube={() => setShowYouTube(!showYouTube)}
-                        onSnippetComplete={() => setSnippetComplete(true)}
+                        onSnippetComplete={() => {
+                            if (window.__hardLog) window.__hardLog("SNIPPET_COMPLETE: called currentCardIndex=" + currentCardIndex + " stackLen=" + stack.length);
+                            setSnippetComplete(true);
+                        }}
                         onVideoError={handleVideoError}
                         isMuted={isMuted}
                         onMuteToggle={() => setIsMuted(prev => !prev)}
