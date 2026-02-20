@@ -267,6 +267,7 @@ function AudioSnippetPlayer({ videoId, onComplete, onError, autoPlay = true, isM
     const playersReadyRef = useRef(0);
     const advanceRef = useRef(null);
     const jumpToSnippetRef = useRef(null);
+    const isInitialPlaybackSetupRef = useRef(false); // Guard to prevent useEffect setVolume during initial playback
     const isMutedRef = useRef(false);
     const pressedDotRef = useRef(null);
     const pressStartRef = useRef(0);
@@ -687,9 +688,23 @@ function AudioSnippetPlayer({ videoId, onComplete, onError, autoPlay = true, isM
 
     useEffect(() => {
         if (isMuted === undefined) return;
+        
+        // OPTION 2: Guard to prevent setVolume() during initial playback setup
+        // This avoids cross-origin Script error from calling setVolume() too quickly after playVideo()
+        if (isInitialPlaybackSetupRef.current) {
+            if (window.__hardLog) window.__hardLog("USEFFECT_VOLUME: skipping setVolume during initial playback setup");
+            return;
+        }
+        
         const p = getPlayer(activePlayerRef.current);
         if (p && p.setVolume) {
-            p.setVolume(isMuted ? 0 : 100);
+            if (window.__hardLog) window.__hardLog("USEFFECT_VOLUME: setting volume to " + (isMuted ? 0 : 100));
+            try {
+                p.setVolume(isMuted ? 0 : 100);
+            } catch (e) {
+                if (window.__hardLog) window.__hardLog("USEFFECT_VOLUME_ERROR: " + (e?.message || e || 'unknown'));
+                console.error('[useEffect] setVolume error:', e);
+            }
         }
     }, [isMuted, currentSnippet, playerReady]);
 
@@ -730,16 +745,25 @@ function AudioSnippetPlayer({ videoId, onComplete, onError, autoPlay = true, isM
             }
             
             // Update UI state after playVideo call
+            const wasAudioDisabled = !hasAudioEnabledRef.current;
             setHasAudioEnabled(true);
             hasAudioEnabledRef.current = true;
             
-            // Unmute when enabling audio
-            if (isMuted && onMuteToggle) {
-                try {
-                    if (window.__hardLog) window.__hardLog("PLAY_STATE: calling onMuteToggle");
-                    onMuteToggle();
-                } catch (e) {
-                    if (window.__hardLog) window.__hardLog("PLAY_ERROR: onMuteToggle " + (e?.message || e || 'unknown'));
+            // OPTION 1: Skip onMuteToggle on first tap to avoid immediate setVolume() call
+            // Volume will be set in playSnippets() after delay when player is ready
+            if (wasAudioDisabled) {
+                if (window.__hardLog) window.__hardLog("PLAY_STATE: skipping onMuteToggle on first tap (will set volume in playSnippets)");
+                // Mark that we're in initial playback setup to guard useEffect
+                isInitialPlaybackSetupRef.current = true;
+            } else {
+                // Only call onMuteToggle if audio was already enabled (subsequent taps)
+                if (isMuted && onMuteToggle) {
+                    try {
+                        if (window.__hardLog) window.__hardLog("PLAY_STATE: calling onMuteToggle (audio already enabled)");
+                        onMuteToggle();
+                    } catch (e) {
+                        if (window.__hardLog) window.__hardLog("PLAY_ERROR: onMuteToggle " + (e?.message || e || 'unknown'));
+                    }
                 }
             }
             
