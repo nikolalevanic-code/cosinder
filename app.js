@@ -3,6 +3,8 @@
     'use strict';
     if (typeof window === 'undefined') return;
     
+    const DEBUG_VISIBLE_KEY = 'cosinder_hard_debug_visible';
+    
     // Initialize logs array
     if (!window.__hard_logs__) {
         window.__hard_logs__ = [];
@@ -14,6 +16,69 @@
             }
         } catch (e) {}
     }
+    
+    function getVisible() {
+        try {
+            return localStorage.getItem(DEBUG_VISIBLE_KEY) !== '0';
+        } catch (e) { return true; }
+    }
+    
+    function setVisibleStored(visible) {
+        try {
+            localStorage.setItem(DEBUG_VISIBLE_KEY, visible ? '1' : '0');
+        } catch (e) {}
+    }
+    
+    function ensureWrapperAndOverlay() {
+        let wrapper = document.getElementById('__hard_debug_wrapper__');
+        if (wrapper) return { wrapper: wrapper, overlay: document.getElementById('__hard_debug_overlay__') };
+        wrapper = document.createElement('div');
+        wrapper.id = '__hard_debug_wrapper__';
+        wrapper.style.cssText = 'position:fixed;top:10px;left:10px;z-index:2147483647;display:flex;flex-direction:column;align-items:flex-start;gap:4px;';
+        const overlay = document.createElement('pre');
+        overlay.id = '__hard_debug_overlay__';
+        overlay.style.cssText = 'max-width:500px;max-height:300px;overflow:auto;background:rgba(0,0,0,0.95);color:#0f0;padding:10px;border:2px solid #0f0;border-radius:4px;font-size:10px;font-family:monospace;word-break:break-word;white-space:pre-wrap;margin:0;';
+        const hideBtn = document.createElement('button');
+        hideBtn.type = 'button';
+        hideBtn.textContent = 'Hide debug';
+        hideBtn.style.cssText = 'font-size:10px;padding:4px 8px;cursor:pointer;background:#333;color:#0f0;border:1px solid #0f0;border-radius:4px;';
+        hideBtn.addEventListener('click', function() {
+            setVisibleStored(false);
+            window.__hardDebugSetVisible(false);
+        });
+        wrapper.appendChild(overlay);
+        wrapper.appendChild(hideBtn);
+        document.documentElement.appendChild(wrapper);
+        return { wrapper: wrapper, overlay: overlay };
+    }
+    
+    function ensureShowDebugFloater() {
+        let floater = document.getElementById('__hard_debug_show_btn__');
+        if (floater) return floater;
+        floater = document.createElement('button');
+        floater.id = '__hard_debug_show_btn__';
+        floater.type = 'button';
+        floater.textContent = 'Show debug';
+        floater.style.cssText = 'position:fixed;bottom:10px;left:10px;z-index:2147483647;font-size:10px;padding:6px 10px;cursor:pointer;background:rgba(0,0,0,0.8);color:#0f0;border:1px solid #0f0;border-radius:4px;';
+        floater.addEventListener('click', function() {
+            setVisibleStored(true);
+            window.__hardDebugSetVisible(true);
+        });
+        document.documentElement.appendChild(floater);
+        return floater;
+    }
+    
+    window.__hardDebugSetVisible = function(visible) {
+        var w = document.getElementById('__hard_debug_wrapper__');
+        var s = document.getElementById('__hard_debug_show_btn__');
+        if (visible) {
+            if (w) w.style.display = '';
+            if (s) s.style.display = 'none';
+        } else {
+            if (w) w.style.display = 'none';
+            ensureShowDebugFloater().style.display = '';
+        }
+    };
     
     // Hard log function
     window.__hardLog = function(msg) {
@@ -27,18 +92,16 @@
         try {
             localStorage.setItem('__hard_logs__', JSON.stringify(window.__hard_logs__));
         } catch (e) {}
-        // Update overlay
+        // Update overlay content only (do not change visibility)
         updateHardDebugOverlay();
     };
     
-    // Update overlay function
+    // Update overlay function - only updates pre content
     function updateHardDebugOverlay() {
-        let overlay = document.getElementById('__hard_debug_overlay__');
+        var overlay = document.getElementById('__hard_debug_overlay__');
         if (!overlay) {
-            overlay = document.createElement('pre');
-            overlay.id = '__hard_debug_overlay__';
-            overlay.style.cssText = 'position:fixed;top:10px;left:10px;max-width:500px;max-height:300px;overflow:auto;background:rgba(0,0,0,0.95);color:#0f0;padding:10px;border:2px solid #0f0;border-radius:4px;font-size:10px;font-family:monospace;z-index:2147483647;word-break:break-word;white-space:pre-wrap;';
-            document.documentElement.appendChild(overlay);
+            var o = ensureWrapperAndOverlay();
+            overlay = o.overlay;
         }
         const last25 = window.__hard_logs__.slice(-25);
         overlay.textContent = 'HARD DEBUG (last 25):\n' + last25.join('\n');
@@ -81,11 +144,22 @@
     // Initial log
     window.__hardLog('HARD_DEBUG_INIT');
     
-    // Initial overlay render
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', updateHardDebugOverlay);
-    } else {
+    function initHardDebugVisibility() {
         updateHardDebugOverlay();
+        if (!getVisible()) {
+            ensureWrapperAndOverlay();
+            ensureShowDebugFloater();
+            window.__hardDebugSetVisible(false);
+        } else {
+            var s = document.getElementById('__hard_debug_show_btn__');
+            if (s) s.style.display = 'none';
+        }
+    }
+    
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initHardDebugVisibility);
+    } else {
+        initHardDebugVisibility();
     }
 })();
 
@@ -370,9 +444,10 @@ function AudioSnippetPlayer({ videoId, onComplete, onError, autoPlay = true, isM
     }, [videoId]);
 
     const playSnippets = async () => {
-        if (window.__hardLog) window.__hardLog("PLAYSNIPPETS_ENTER");
-        requestAnimationFrame(() => { setDebug("playSnippets:enter"); });
-        console.log('[snippets] playSnippets called');
+        try {
+            if (window.__hardLog) window.__hardLog("PLAYSNIPPETS_ENTER");
+            requestAnimationFrame(() => { setDebug("playSnippets:enter"); });
+            console.log('[snippets] playSnippets called');
         if (window.__hardLog) window.__hardLog("PLAY_STEP: getPlayer");
         const pa = playerARef.current;
         if (window.__hardLog) window.__hardLog("PLAY_STEP: gotPlayer pa=" + (pa ? "exists" : "null"));
@@ -416,24 +491,48 @@ function AudioSnippetPlayer({ videoId, onComplete, onError, autoPlay = true, isM
         activePlayerRef.current = 'A';
         const pb = playerBRef.current;
         
-        // Guard: check if required methods exist
-        if (!pa.playVideo || typeof pa.playVideo !== 'function') {
-            if (window.__hardLog) window.__hardLog("PLAY_ERROR: player missing playVideo method");
-            requestAnimationFrame(() => { setDebug("playSnippets:noPlayVideo"); });
-            console.log('[snippets] no playVideo method, returning');
-            return;
+        // Guard: check if required methods exist (with detailed error logging)
+        try {
+            if (window.__hardLog) window.__hardLog("CHECK: accessing pa.playVideo property");
+            const hasPlayVideo = pa.playVideo;
+            if (window.__hardLog) window.__hardLog("CHECK: typeof pa.playVideo=" + typeof hasPlayVideo);
+            if (!hasPlayVideo || typeof hasPlayVideo !== 'function') {
+                if (window.__hardLog) window.__hardLog("PLAY_ERROR: player missing playVideo method");
+                requestAnimationFrame(() => { setDebug("playSnippets:noPlayVideo"); });
+                console.log('[snippets] no playVideo method, returning');
+                return;
+            }
+        } catch (e) {
+            if (window.__hardLog) window.__hardLog("SCRIPT_ERROR: accessing pa.playVideo - " + (e?.message || e) + " stack=" + (e?.stack?.substring(0, 200) || 'no stack'));
+            throw e; // Re-throw to see full error
         }
-        if (!pa.seekTo || typeof pa.seekTo !== 'function') {
-            if (window.__hardLog) window.__hardLog("PLAY_ERROR: player missing seekTo method");
-            requestAnimationFrame(() => { setDebug("playSnippets:noSeekTo"); });
-            console.log('[snippets] no seekTo method, returning');
-            return;
+        try {
+            if (window.__hardLog) window.__hardLog("CHECK: accessing pa.seekTo property");
+            const hasSeekTo = pa.seekTo;
+            if (window.__hardLog) window.__hardLog("CHECK: typeof pa.seekTo=" + typeof hasSeekTo);
+            if (!hasSeekTo || typeof hasSeekTo !== 'function') {
+                if (window.__hardLog) window.__hardLog("PLAY_ERROR: player missing seekTo method");
+                requestAnimationFrame(() => { setDebug("playSnippets:noSeekTo"); });
+                console.log('[snippets] no seekTo method, returning');
+                return;
+            }
+        } catch (e) {
+            if (window.__hardLog) window.__hardLog("SCRIPT_ERROR: accessing pa.seekTo - " + (e?.message || e) + " stack=" + (e?.stack?.substring(0, 200) || 'no stack'));
+            throw e;
         }
-        if (!pa.setVolume || typeof pa.setVolume !== 'function') {
-            if (window.__hardLog) window.__hardLog("PLAY_ERROR: player missing setVolume method");
-            requestAnimationFrame(() => { setDebug("playSnippets:noSetVolume"); });
-            console.log('[snippets] no setVolume method, returning');
-            return;
+        try {
+            if (window.__hardLog) window.__hardLog("CHECK: accessing pa.setVolume property");
+            const hasSetVolume = pa.setVolume;
+            if (window.__hardLog) window.__hardLog("CHECK: typeof pa.setVolume=" + typeof hasSetVolume);
+            if (!hasSetVolume || typeof hasSetVolume !== 'function') {
+                if (window.__hardLog) window.__hardLog("PLAY_ERROR: player missing setVolume method");
+                requestAnimationFrame(() => { setDebug("playSnippets:noSetVolume"); });
+                console.log('[snippets] no setVolume method, returning');
+                return;
+            }
+        } catch (e) {
+            if (window.__hardLog) window.__hardLog("SCRIPT_ERROR: accessing pa.setVolume - " + (e?.message || e) + " stack=" + (e?.stack?.substring(0, 200) || 'no stack'));
+            throw e;
         }
         
         if (IS_MOBILE) {
@@ -459,7 +558,21 @@ function AudioSnippetPlayer({ videoId, onComplete, onError, autoPlay = true, isM
                 // Skip playVideo if already called immediately in button handler
                 if (hasPlayedRef.current) {
                     if (window.__hardLog) window.__hardLog("PLAY_STEP: skipping playVideo (already called immediately)");
-                    requestAnimationFrame(() => { setDebug("playSnippets:playCalled"); });
+                    try {
+                        if (window.__hardLog) window.__hardLog("SETDEBUG: about to schedule setDebug via RAF");
+                        requestAnimationFrame(() => {
+                            try {
+                                if (window.__hardLog) window.__hardLog("SETDEBUG_RAF: calling setDebug");
+                                setDebug("playSnippets:playCalled");
+                                if (window.__hardLog) window.__hardLog("SETDEBUG_RAF: setDebug called successfully");
+                            } catch (e) {
+                                if (window.__hardLog) window.__hardLog("SCRIPT_ERROR: in setDebug RAF callback - " + (e?.message || e) + " stack=" + (e?.stack?.substring(0, 200) || 'no stack'));
+                            }
+                        });
+                        if (window.__hardLog) window.__hardLog("SETDEBUG: scheduled setDebug via RAF");
+                    } catch (e) {
+                        if (window.__hardLog) window.__hardLog("SCRIPT_ERROR: scheduling setDebug - " + (e?.message || e) + " stack=" + (e?.stack?.substring(0, 200) || 'no stack'));
+                    }
                     console.log('[snippets] playVideo already called (iOS)');
                 } else {
                     if (window.__hardLog) window.__hardLog("CALL: playVideo typeof=" + typeof currentPa.playVideo);
@@ -471,7 +584,21 @@ function AudioSnippetPlayer({ videoId, onComplete, onError, autoPlay = true, isM
                     currentPa.playVideo();
                     if (window.__hardLog) window.__hardLog("PLAY_STEP: playVideo called successfully");
                     hasPlayedRef.current = true;
-                    requestAnimationFrame(() => { setDebug("playSnippets:playCalled"); });
+                    try {
+                        if (window.__hardLog) window.__hardLog("SETDEBUG: about to schedule setDebug via RAF (else branch)");
+                        requestAnimationFrame(() => {
+                            try {
+                                if (window.__hardLog) window.__hardLog("SETDEBUG_RAF: calling setDebug (else branch)");
+                                setDebug("playSnippets:playCalled");
+                                if (window.__hardLog) window.__hardLog("SETDEBUG_RAF: setDebug called successfully (else branch)");
+                            } catch (e) {
+                                if (window.__hardLog) window.__hardLog("SCRIPT_ERROR: in setDebug RAF callback (else) - " + (e?.message || e) + " stack=" + (e?.stack?.substring(0, 200) || 'no stack'));
+                            }
+                        });
+                        if (window.__hardLog) window.__hardLog("SETDEBUG: scheduled setDebug via RAF (else branch)");
+                    } catch (e) {
+                        if (window.__hardLog) window.__hardLog("SCRIPT_ERROR: scheduling setDebug (else) - " + (e?.message || e) + " stack=" + (e?.stack?.substring(0, 200) || 'no stack'));
+                    }
                     console.log('[snippets] playVideo called (iOS)');
                 }
             } catch (e) {
@@ -482,9 +609,14 @@ function AudioSnippetPlayer({ videoId, onComplete, onError, autoPlay = true, isM
             }
             
             // After delay, seek to position and set volume (when player is ready)
-            if (seekTimeoutRef.current) clearTimeout(seekTimeoutRef.current);
-            seekTimeoutRef.current = setTimeout(() => {
-                const currentPa = playerARef.current;
+            try {
+                if (window.__hardLog) window.__hardLog("SETUP: about to setup setTimeout for seek/volume");
+                if (seekTimeoutRef.current) clearTimeout(seekTimeoutRef.current);
+                if (window.__hardLog) window.__hardLog("SETUP: accessing positionsRef.current");
+                const positionsForTimeout = positionsRef.current;
+                if (window.__hardLog) window.__hardLog("SETUP: positionsForTimeout=" + (positionsForTimeout ? positionsForTimeout.length + " items" : "null"));
+                seekTimeoutRef.current = setTimeout(() => {
+                    const currentPa = playerARef.current;
                 if (!currentPa) {
                     if (window.__hardLog) window.__hardLog("PLAY_ERROR:seekTo player destroyed");
                     seekTimeoutRef.current = null;
@@ -518,6 +650,10 @@ function AudioSnippetPlayer({ videoId, onComplete, onError, autoPlay = true, isM
                 }
                 seekTimeoutRef.current = null;
             }, 150); // Slightly longer delay to ensure player is ready
+            } catch (e) {
+                if (window.__hardLog) window.__hardLog("SCRIPT_ERROR: setting up setTimeout - " + (e?.message || e) + " stack=" + (e?.stack?.substring(0, 200) || 'no stack'));
+                throw e;
+            }
         } else {
             // Desktop: original order with individual try/catch
             try {
@@ -653,6 +789,11 @@ function AudioSnippetPlayer({ videoId, onComplete, onError, autoPlay = true, isM
         jumpToSnippetRef.current = jumpToSnippet;
 
         scheduleAdvance(0);
+        } catch (e) {
+            if (window.__hardLog) window.__hardLog("SCRIPT_ERROR: playSnippets function body - " + (e?.message || e) + " stack=" + (e?.stack?.substring(0, 300) || 'no stack'));
+            // Don't re-throw - log and continue to prevent app crash
+            console.error('[snippets] playSnippets error:', e);
+        }
     };
 
     const handleDotPointerDown = (i) => {
@@ -745,8 +886,13 @@ function AudioSnippetPlayer({ videoId, onComplete, onError, autoPlay = true, isM
             hasAudioEnabledRef.current = true; // Update ref immediately for logic checks
             // Defer state update to avoid React re-render during playVideo() initialization
             requestAnimationFrame(() => {
-                setHasAudioEnabled(true);
-                if (window.__hardLog) window.__hardLog("PLAY_STATE: setHasAudioEnabled deferred via RAF");
+                try {
+                    if (window.__hardLog) window.__hardLog("RAF_CALLBACK: setHasAudioEnabled about to call");
+                    setHasAudioEnabled(true);
+                    if (window.__hardLog) window.__hardLog("RAF_CALLBACK: setHasAudioEnabled called successfully");
+                } catch (e) {
+                    if (window.__hardLog) window.__hardLog("SCRIPT_ERROR: in setHasAudioEnabled RAF callback - " + (e?.message || e) + " stack=" + (e?.stack?.substring(0, 200) || 'no stack'));
+                }
             });
             
             // OPTION 1: Skip onMuteToggle on first tap to avoid immediate setVolume() call
