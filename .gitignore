@@ -1,6 +1,9 @@
 # Dependencies
 node_modules/
 
+# Python virtualenvs (accidentally committed once - keep out)
+effnet-env/
+
 # Secrets
 .env
 

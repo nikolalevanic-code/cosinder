@@ -360,10 +360,8 @@ function AudioSnippetPlayer({ videoId, onComplete, onError, autoPlay = true, isM
     const [currentSnippet, setCurrentSnippet] = useState(0);
     const [isPlaying, setIsPlaying] = useState(false);
     const [playerReady, setPlayerReady] = useState(false);
-    const [needsUserGesture, setNeedsUserGesture] = useState(false);
     const [hasAudioEnabled, setHasAudioEnabled] = useState(!IS_MOBILE); // false on mobile (needs gesture), true on desktop (autoplay works)
     const hasAudioEnabledRef = useRef(!IS_MOBILE);
-    const [debug, setDebug] = useState("idle");
     const [holdingDot, setHoldingDot] = useState(null);
     const holdingDotRef = useRef(null);
     const snippetTimerRef = useRef(null);
@@ -381,7 +379,6 @@ function AudioSnippetPlayer({ videoId, onComplete, onError, autoPlay = true, isM
     const pressStartRef = useRef(0);
     const playButtonHandledRef = useRef(false);
     const seekTimeoutRef = useRef(null);
-    const unmuteTimeoutRef = useRef(null);
 
     isMutedRef.current = isMuted ?? false;
     hasAudioEnabledRef.current = hasAudioEnabled;
@@ -397,7 +394,6 @@ function AudioSnippetPlayer({ videoId, onComplete, onError, autoPlay = true, isM
         setIsPlaying(false);
         setPlayerReady(false);
         setHoldingDot(null);
-        setNeedsUserGesture(false);
         const initialAudioEnabled = !IS_MOBILE;
         setHasAudioEnabled(initialAudioEnabled); // Reset to initial state: false on mobile, true on desktop
         hasAudioEnabledRef.current = initialAudioEnabled;
@@ -418,7 +414,6 @@ function AudioSnippetPlayer({ videoId, onComplete, onError, autoPlay = true, isM
                     const canAutoplay = IS_MOBILE ? hasAudioEnabledRef.current : true;
                     if (playersReadyRef.current >= needed && autoPlay && !hasPlayedRef.current && canAutoplay) {
                         hasPlayedRef.current = true;
-                        if (IS_MOBILE) setNeedsUserGesture(false);
                         playSnippets();
                     }
                 };
@@ -447,7 +442,9 @@ function AudioSnippetPlayer({ videoId, onComplete, onError, autoPlay = true, isM
                             if (window.__hardLog) window.__hardLog("YT_ERROR_IGNORED: code=" + code + " (playback already started)");
                             return;
                         }
-                        const critical = [100, 101, 150].includes(code);
+                        // 2: invalid ID, 5: HTML5 player error, 100: not found,
+                        // 101/150: embedding not allowed
+                        const critical = [2, 5, 100, 101, 150].includes(code);
                         if (critical && onError) {
                             onError(code);
                             return;
@@ -492,7 +489,6 @@ function AudioSnippetPlayer({ videoId, onComplete, onError, autoPlay = true, isM
         return () => {
             if (snippetTimerRef.current) clearTimeout(snippetTimerRef.current);
             if (seekTimeoutRef.current) clearTimeout(seekTimeoutRef.current);
-            if (unmuteTimeoutRef.current) clearTimeout(unmuteTimeoutRef.current);
             if (fadeIntervalRef.current && typeof fadeIntervalRef.current === 'function') fadeIntervalRef.current();
             [playerARef.current, playerBRef.current].forEach(p => {
                 if (p && p.destroy) try { p.destroy(); } catch (e) {}
@@ -507,25 +503,8 @@ function AudioSnippetPlayer({ videoId, onComplete, onError, autoPlay = true, isM
     }, [videoId]);
 
     const playSnippets = async () => {
-        try {
-            if (window.__hardLog) window.__hardLog("PLAYSNIPPETS_ENTER");
-            requestAnimationFrame(() => { setDebug("playSnippets:enter"); });
-            console.log('[snippets] playSnippets called');
-        if (window.__hardLog) window.__hardLog("PLAY_STEP: getPlayer");
         const pa = playerARef.current;
-        if (window.__hardLog) window.__hardLog("PLAY_STEP: gotPlayer pa=" + (pa ? "exists" : "null"));
-        if (!pa) {
-            if (window.__hardLog) window.__hardLog("PLAY_ERROR: player undefined");
-            requestAnimationFrame(() => { setDebug("playSnippets:noPlayer"); });
-            console.log('[snippets] no player, returning');
-            return;
-        }
-        if (!pa.getDuration) {
-            if (window.__hardLog) window.__hardLog("PLAY_ERROR: player missing getDuration");
-            requestAnimationFrame(() => { setDebug("playSnippets:noPlayer"); });
-            console.log('[snippets] no getDuration, returning');
-            return;
-        }
+        if (!pa || !pa.getDuration) return;
         const duration = await new Promise((resolve) => {
             const start = Date.now();
             const timeoutMs = IS_MOBILE ? 15000 : 10000;
@@ -537,11 +516,7 @@ function AudioSnippetPlayer({ videoId, onComplete, onError, autoPlay = true, isM
             };
             check();
         });
-        if (window.__hardLog) window.__hardLog("PLAY_STEP: getDuration resolved=" + duration);
-        console.log('[snippets] getDuration resolved:', duration);
         if (!duration || duration < 30) {
-            if (window.__hardLog) window.__hardLog("PLAY_ERROR: duration invalid, calling onComplete");
-            console.log('[snippets] duration invalid, calling onComplete');
             onComplete();
             return;
         }
@@ -552,200 +527,58 @@ function AudioSnippetPlayer({ videoId, onComplete, onError, autoPlay = true, isM
         ];
         positionsRef.current = positions;
         activePlayerRef.current = 'A';
-        const pb = playerBRef.current;
-        
-        // Guard: check if required methods exist (with detailed error logging)
-        try {
-            if (window.__hardLog) window.__hardLog("CHECK: accessing pa.playVideo property");
-            const hasPlayVideo = pa.playVideo;
-            if (window.__hardLog) window.__hardLog("CHECK: typeof pa.playVideo=" + typeof hasPlayVideo);
-            if (!hasPlayVideo || typeof hasPlayVideo !== 'function') {
-                if (window.__hardLog) window.__hardLog("PLAY_ERROR: player missing playVideo method");
-                requestAnimationFrame(() => { setDebug("playSnippets:noPlayVideo"); });
-                console.log('[snippets] no playVideo method, returning');
-                return;
-            }
-        } catch (e) {
-            if (window.__hardLog) window.__hardLog("SCRIPT_ERROR: accessing pa.playVideo - " + (e?.message || e) + " stack=" + (e?.stack?.substring(0, 200) || 'no stack'));
-            throw e; // Re-throw to see full error
-        }
-        try {
-            if (window.__hardLog) window.__hardLog("CHECK: accessing pa.seekTo property");
-            const hasSeekTo = pa.seekTo;
-            if (window.__hardLog) window.__hardLog("CHECK: typeof pa.seekTo=" + typeof hasSeekTo);
-            if (!hasSeekTo || typeof hasSeekTo !== 'function') {
-                if (window.__hardLog) window.__hardLog("PLAY_ERROR: player missing seekTo method");
-                requestAnimationFrame(() => { setDebug("playSnippets:noSeekTo"); });
-                console.log('[snippets] no seekTo method, returning');
-                return;
-            }
-        } catch (e) {
-            if (window.__hardLog) window.__hardLog("SCRIPT_ERROR: accessing pa.seekTo - " + (e?.message || e) + " stack=" + (e?.stack?.substring(0, 200) || 'no stack'));
-            throw e;
-        }
-        try {
-            if (window.__hardLog) window.__hardLog("CHECK: accessing pa.setVolume property");
-            const hasSetVolume = pa.setVolume;
-            if (window.__hardLog) window.__hardLog("CHECK: typeof pa.setVolume=" + typeof hasSetVolume);
-            if (!hasSetVolume || typeof hasSetVolume !== 'function') {
-                if (window.__hardLog) window.__hardLog("PLAY_ERROR: player missing setVolume method");
-                requestAnimationFrame(() => { setDebug("playSnippets:noSetVolume"); });
-                console.log('[snippets] no setVolume method, returning');
-                return;
-            }
-        } catch (e) {
-            if (window.__hardLog) window.__hardLog("SCRIPT_ERROR: accessing pa.setVolume - " + (e?.message || e) + " stack=" + (e?.stack?.substring(0, 200) || 'no stack'));
-            throw e;
-        }
-        
+        if (typeof pa.playVideo !== 'function' || typeof pa.seekTo !== 'function' || typeof pa.setVolume !== 'function') return;
+
         if (IS_MOBILE) {
-            // iOS-safe call order: playVideo first, then seekTo after delay, then setVolume
-            if (window.__hardLog) window.__hardLog("MUTE_STATE: " + (isMutedRef.current ? "muted" : "unmuted"));
-            
-            // Re-check player before playVideo (may have changed during async operations)
+            // iOS-safe call order: playVideo first (inside the user gesture if
+            // possible), then seekTo + setVolume after a short delay.
             const currentPa = playerARef.current;
-            if (!currentPa || currentPa !== pa) {
-                if (window.__hardLog) window.__hardLog("PLAY_ERROR: player changed during async, pa=" + (pa ? "was" : "null") + " currentPa=" + (currentPa ? "is" : "null"));
-                return;
-            }
-            
-            // EXPERIMENT 1: post-play controls disabled - only playVideo
-            if (false) {
-                // Force muted start on iOS to avoid Safari/YouTube instability
-                try { pa.mute?.(); } catch {}
-                try { pa.setVolume?.(0); } catch {}
-                if (window.__hardLog) window.__hardLog("IOS_START_MUTED");
-            }
-            
-            try {
-                // Skip playVideo if already called immediately in button handler
-                if (hasPlayedRef.current) {
-                    if (window.__hardLog) window.__hardLog("PLAY_STEP: skipping playVideo (already called immediately)");
-                    try {
-                        if (window.__hardLog) window.__hardLog("SETDEBUG: about to schedule setDebug via RAF");
-                        requestAnimationFrame(() => {
-                            try {
-                                if (window.__hardLog) window.__hardLog("SETDEBUG_RAF: calling setDebug");
-                                setDebug("playSnippets:playCalled");
-                                if (window.__hardLog) window.__hardLog("SETDEBUG_RAF: setDebug called successfully");
-                            } catch (e) {
-                                if (window.__hardLog) window.__hardLog("SCRIPT_ERROR: in setDebug RAF callback - " + (e?.message || e) + " stack=" + (e?.stack?.substring(0, 200) || 'no stack'));
-                            }
-                        });
-                        if (window.__hardLog) window.__hardLog("SETDEBUG: scheduled setDebug via RAF");
-                    } catch (e) {
-                        if (window.__hardLog) window.__hardLog("SCRIPT_ERROR: scheduling setDebug - " + (e?.message || e) + " stack=" + (e?.stack?.substring(0, 200) || 'no stack'));
-                    }
-                    console.log('[snippets] playVideo already called (iOS)');
-                } else {
-                    if (window.__hardLog) window.__hardLog("CALL: playVideo typeof=" + typeof currentPa.playVideo);
-                    if (!currentPa || typeof currentPa.playVideo !== 'function') {
-                        if (window.__hardLog) window.__hardLog("PLAY_ERROR:playVideo player invalid");
-                        return;
-                    }
-                    if (window.__hardLog) window.__hardLog("PLAY_STEP: about to call playVideo");
+            if (!currentPa || currentPa !== pa) return; // player replaced during async wait
+            if (!hasPlayedRef.current) {
+                try {
                     currentPa.playVideo();
-                    if (window.__hardLog) window.__hardLog("PLAY_STEP: playVideo called successfully");
                     hasPlayedRef.current = true;
-                    try {
-                        if (window.__hardLog) window.__hardLog("SETDEBUG: about to schedule setDebug via RAF (else branch)");
-                        requestAnimationFrame(() => {
-                            try {
-                                if (window.__hardLog) window.__hardLog("SETDEBUG_RAF: calling setDebug (else branch)");
-                                setDebug("playSnippets:playCalled");
-                                if (window.__hardLog) window.__hardLog("SETDEBUG_RAF: setDebug called successfully (else branch)");
-                            } catch (e) {
-                                if (window.__hardLog) window.__hardLog("SCRIPT_ERROR: in setDebug RAF callback (else) - " + (e?.message || e) + " stack=" + (e?.stack?.substring(0, 200) || 'no stack'));
-                            }
-                        });
-                        if (window.__hardLog) window.__hardLog("SETDEBUG: scheduled setDebug via RAF (else branch)");
-                    } catch (e) {
-                        if (window.__hardLog) window.__hardLog("SCRIPT_ERROR: scheduling setDebug (else) - " + (e?.message || e) + " stack=" + (e?.stack?.substring(0, 200) || 'no stack'));
-                    }
-                    console.log('[snippets] playVideo called (iOS)');
-                }
-            } catch (e) {
-                if (window.__hardLog) window.__hardLog("PLAY_ERROR:playVideo " + (e?.message || e || 'unknown'));
-                requestAnimationFrame(() => { setDebug(`error:${e?.message || 'playVideo failed'}`); });
-                console.error('[snippets] playVideo error:', e);
-                return;
-            }
-            
-            // After delay, seek to position and set volume (when player is ready)
-            try {
-                if (window.__hardLog) window.__hardLog("SETUP: about to setup setTimeout for seek/volume");
-                if (seekTimeoutRef.current) clearTimeout(seekTimeoutRef.current);
-                if (window.__hardLog) window.__hardLog("SETUP: accessing positionsRef.current");
-                const positionsForTimeout = positionsRef.current;
-                if (window.__hardLog) window.__hardLog("SETUP: positionsForTimeout=" + (positionsForTimeout ? positionsForTimeout.length + " items" : "null"));
-                seekTimeoutRef.current = setTimeout(() => {
-                    const currentPa = playerARef.current;
-                if (!currentPa) {
-                    if (window.__hardLog) window.__hardLog("PLAY_ERROR:seekTo player destroyed");
-                    seekTimeoutRef.current = null;
-                    isInitialPlaybackSetupRef.current = false; // Clear guard flag
+                } catch (e) {
+                    console.error('[snippets] playVideo error:', e);
                     return;
                 }
-                
+            }
+            if (seekTimeoutRef.current) clearTimeout(seekTimeoutRef.current);
+            seekTimeoutRef.current = setTimeout(() => {
+                seekTimeoutRef.current = null;
+                const p = playerARef.current;
+                if (!p) {
+                    isInitialPlaybackSetupRef.current = false;
+                    return;
+                }
                 try {
-                    if (window.__hardLog) window.__hardLog("CALL: seekTo typeof=" + typeof currentPa.seekTo);
-                    currentPa.seekTo(positions[0], true);
-                    console.log('[snippets] seekTo called (iOS)');
+                    p.seekTo(positions[0], true);
                 } catch (e) {
-                    if (window.__hardLog) window.__hardLog("PLAY_ERROR:seekTo " + (e?.message || e));
                     console.error('[snippets] seekTo error:', e);
                 }
-                
-                // Set volume after seek (when player is ready) - this is safe now
                 try {
-                    const targetVolume = isMutedRef.current ? 0 : 100;
-                    if (window.__hardLog) window.__hardLog("CALL: setVolume typeof=" + typeof currentPa.setVolume + " volume=" + targetVolume);
-                    currentPa.setVolume(targetVolume);
-                    console.log('[snippets] setVolume called (iOS) to ' + targetVolume);
-                    // Clear guard flag after successful volume set - useEffect can now handle volume changes
-                    isInitialPlaybackSetupRef.current = false;
-                    if (window.__hardLog) window.__hardLog("PLAY_STEP: initial playback setup complete, guard flag cleared");
+                    p.setVolume(isMutedRef.current ? 0 : 100);
                 } catch (e) {
-                    if (window.__hardLog) window.__hardLog("PLAY_ERROR:setVolume " + (e?.message || e));
                     console.error('[snippets] setVolume error:', e);
-                    // Clear guard flag even on error so we don't get stuck
-                    isInitialPlaybackSetupRef.current = false;
                 }
-                seekTimeoutRef.current = null;
-            }, 150); // Slightly longer delay to ensure player is ready
-            } catch (e) {
-                if (window.__hardLog) window.__hardLog("SCRIPT_ERROR: setting up setTimeout - " + (e?.message || e) + " stack=" + (e?.stack?.substring(0, 200) || 'no stack'));
-                throw e;
-            }
+                // Initial setup done - the isMuted useEffect may manage volume from here on
+                isInitialPlaybackSetupRef.current = false;
+            }, 150);
         } else {
-            // Desktop: original order with individual try/catch
+            // Desktop: seek and set volume up front, then play
             try {
-                if (window.__hardLog) window.__hardLog("CALL: seekTo typeof=" + typeof pa.seekTo);
                 pa.seekTo(positions[0], true);
             } catch (e) {
-                if (window.__hardLog) window.__hardLog("PLAY_ERROR:seekTo " + (e?.message || e));
-                requestAnimationFrame(() => { setDebug(`error:${e.message}`); });
                 console.error('[snippets] seekTo error:', e);
             }
-            
             try {
-                if (window.__hardLog) window.__hardLog("CALL: setVolume typeof=" + typeof pa.setVolume);
                 pa.setVolume(isMutedRef.current ? 0 : 100);
             } catch (e) {
-                if (window.__hardLog) window.__hardLog("PLAY_ERROR:setVolume " + (e?.message || e));
-                requestAnimationFrame(() => { setDebug(`error:${e.message}`); });
                 console.error('[snippets] setVolume error:', e);
             }
-            
             try {
-                requestAnimationFrame(() => { setDebug("playSnippets:beforePlay"); });
-                if (window.__hardLog) window.__hardLog("CALL: playVideo typeof=" + typeof pa.playVideo);
                 pa.playVideo();
-                requestAnimationFrame(() => { setDebug("playSnippets:playCalled"); });
-                console.log('[snippets] playVideo called');
             } catch (e) {
-                if (window.__hardLog) window.__hardLog("PLAY_ERROR:playVideo " + (e?.message || e));
-                requestAnimationFrame(() => { setDebug(`error:${e.message}`); });
                 console.error('[snippets] playVideo error:', e);
             }
         }
@@ -852,11 +685,6 @@ function AudioSnippetPlayer({ videoId, onComplete, onError, autoPlay = true, isM
         jumpToSnippetRef.current = jumpToSnippet;
 
         scheduleAdvance(0);
-        } catch (e) {
-            if (window.__hardLog) window.__hardLog("SCRIPT_ERROR: playSnippets function body - " + (e?.message || e) + " stack=" + (e?.stack?.substring(0, 300) || 'no stack'));
-            // Don't re-throw - log and continue to prevent app crash
-            console.error('[snippets] playSnippets error:', e);
-        }
     };
 
     const handleDotPointerDown = (i) => {
@@ -884,21 +712,14 @@ function AudioSnippetPlayer({ videoId, onComplete, onError, autoPlay = true, isM
 
     useEffect(() => {
         if (isMuted === undefined) return;
-        
-        // OPTION 2: Guard to prevent setVolume() during initial playback setup
-        // This avoids cross-origin Script error from calling setVolume() too quickly after playVideo()
-        if (isInitialPlaybackSetupRef.current) {
-            if (window.__hardLog) window.__hardLog("USEFFECT_VOLUME: skipping setVolume during initial playback setup");
-            return;
-        }
-        
+        // Skip during initial playback setup - playSnippets sets the volume
+        // itself once the player is ready
+        if (isInitialPlaybackSetupRef.current) return;
         const p = getPlayer(activePlayerRef.current);
         if (p && p.setVolume) {
-            if (window.__hardLog) window.__hardLog("USEFFECT_VOLUME: setting volume to " + (isMuted ? 0 : 100));
             try {
                 p.setVolume(isMuted ? 0 : 100);
             } catch (e) {
-                if (window.__hardLog) window.__hardLog("USEFFECT_VOLUME_ERROR: " + (e?.message || e || 'unknown'));
                 console.error('[useEffect] setVolume error:', e);
             }
         }
@@ -906,106 +727,49 @@ function AudioSnippetPlayer({ videoId, onComplete, onError, autoPlay = true, isM
 
     // Shared handler for play button (works for both touch and click)
     const handlePlayButtonClick = (e, source) => {
-        if (window.__hardLog) window.__hardLog("PLAY_HANDLER_FIRED type=" + e.type);
-        if (window.__log) window.__log("PLAY: " + e.type);
-        try {
-            e.preventDefault();
-            e.stopPropagation();
-            e.nativeEvent?.stopImmediatePropagation?.();
-            
-            // Prevent double-firing
-            if (playButtonHandledRef.current) return;
-            playButtonHandledRef.current = true;
-            setTimeout(() => { playButtonHandledRef.current = false; }, 300);
-            
-            setDebug(`handler:${source}`);
-            console.log(`[play button] ${source} fired, playerReady:`, playerReady, 'hasPlayedRef:', hasPlayedRef.current);
-            if (window.__hardLog) window.__hardLog("PLAY_BUTTON: playerReady=" + playerReady + " hasPlayed=" + hasPlayedRef.current);
-            
-            // Defer playVideo() call to allow iframe initialization time (preserves user gesture via RAF)
-            if (playerReady) {
-                const pa = playerARef.current;
-                if (pa && typeof pa.playVideo === 'function') {
-                    if (window.__hardLog) window.__hardLog("PLAY_DEFERRED: scheduling playVideo via RAF");
-                    requestAnimationFrame(() => {
-                        try {
-                            if (window.__hardLog) window.__hardLog("PLAY_DEFERRED: calling playVideo after RAF");
-                            pa.playVideo();
-                            if (window.__hardLog) window.__hardLog("PLAY_DEFERRED: playVideo called successfully");
-                            hasPlayedRef.current = true;
-                        } catch (e) {
-                            if (window.__hardLog) window.__hardLog("PLAY_ERROR: deferred playVideo " + (e?.message || e || 'unknown'));
-                            console.error('[play button] deferred playVideo error:', e);
-                        }
-                    });
-                } else {
-                    if (window.__hardLog) window.__hardLog("PLAY_ERROR: deferred playVideo - player invalid");
-                }
-            }
-            
-            // Update UI state after playVideo call
-            // Defer setHasAudioEnabled to prevent Safari Script error during re-render
-            const wasAudioDisabled = !hasAudioEnabledRef.current;
-            hasAudioEnabledRef.current = true; // Update ref immediately for logic checks
-            // Defer state update to avoid React re-render during playVideo() initialization
-            requestAnimationFrame(() => {
-                try {
-                    if (window.__hardLog) window.__hardLog("RAF_CALLBACK: setHasAudioEnabled about to call");
-                    setHasAudioEnabled(true);
-                    if (window.__hardLog) window.__hardLog("RAF_CALLBACK: setHasAudioEnabled called successfully");
-                } catch (e) {
-                    if (window.__hardLog) window.__hardLog("SCRIPT_ERROR: in setHasAudioEnabled RAF callback - " + (e?.message || e) + " stack=" + (e?.stack?.substring(0, 200) || 'no stack'));
-                }
-            });
-            
-            // First tap: unmute at the App level (session gesture) so the
-            // deferred setVolume in playSnippets targets 100, not 0. The
-            // isInitialPlaybackSetupRef guard still defers the actual
-            // setVolume call until the player is ready.
-            if (wasAudioDisabled) {
-                isInitialPlaybackSetupRef.current = true;
-                if (onSessionGesture) {
-                    try {
-                        if (window.__hardLog) window.__hardLog("PLAY_STATE: calling onSessionGesture to unmute session");
-                        onSessionGesture();
-                    } catch (e) {
-                        if (window.__hardLog) window.__hardLog("PLAY_ERROR: onSessionGesture " + (e?.message || e || 'unknown'));
-                    }
-                }
-            } else {
-                // Only call onMuteToggle if audio was already enabled (subsequent taps)
-                if (isMuted && onMuteToggle) {
-                    try {
-                        if (window.__hardLog) window.__hardLog("PLAY_STATE: calling onMuteToggle (audio already enabled)");
-                        onMuteToggle();
-                    } catch (e) {
-                        if (window.__hardLog) window.__hardLog("PLAY_ERROR: onMuteToggle " + (e?.message || e || 'unknown'));
-                    }
-                }
-            }
-            
-            // Schedule playSnippets to do seek/volume setup after state updates
-            if (playerReady) {
-                const wasReady = playerReady; // Capture state in closure
-                if (window.__hardLog) window.__hardLog("PLAY_BUTTON: scheduling playSnippets for seek/volume");
-                // Use requestAnimationFrame to run after React flush
+        e.preventDefault();
+        e.stopPropagation();
+        e.nativeEvent?.stopImmediatePropagation?.();
+        
+        // Prevent double-firing (touchend + click both fire for one tap)
+        if (playButtonHandledRef.current) return;
+        playButtonHandledRef.current = true;
+        setTimeout(() => { playButtonHandledRef.current = false; }, 300);
+        
+        // Call playVideo via RAF: gives the iframe a beat to settle while
+        // staying within the user-gesture window iOS requires
+        if (playerReady) {
+            const pa = playerARef.current;
+            if (pa && typeof pa.playVideo === 'function') {
                 requestAnimationFrame(() => {
-                    if (window.__hardLog) window.__hardLog("PLAY_RAF_CALLBACK: wasReady=" + wasReady + " nowReady=" + playerReady);
-                    if (!playerReady) {
-                        if (window.__hardLog) window.__hardLog("PLAY_ERROR: playerReady became false during RAF");
-                        return;
+                    try {
+                        pa.playVideo();
+                        hasPlayedRef.current = true;
+                    } catch (e) {
+                        console.error('[play button] deferred playVideo error:', e);
                     }
-                    // playSnippets will handle seek/volume, but playVideo already called
-                    playSnippets();
                 });
-            } else {
-                setDebug(`handler:${source}:notReady`);
-                console.log('[play button] Player not ready yet, playerReady:', playerReady);
             }
-        } catch (err) {
-            if (window.__hardLog) window.__hardLog("PLAY_ERROR: " + (err?.message || err));
-            setDebug(`error:${err.message}`);
-            console.error('[play button] handler error:', err);
+        }
+        
+        const wasAudioDisabled = !hasAudioEnabledRef.current;
+        hasAudioEnabledRef.current = true;
+        requestAnimationFrame(() => setHasAudioEnabled(true));
+        
+        if (wasAudioDisabled) {
+            // First tap: unmute at the App level (session gesture) so the
+            // deferred setVolume in playSnippets targets 100, not 0
+            isInitialPlaybackSetupRef.current = true;
+            if (onSessionGesture) onSessionGesture();
+        } else if (isMuted && onMuteToggle) {
+            onMuteToggle();
+        }
+        
+        // playSnippets handles seek/volume after React state flush
+        if (playerReady) {
+            requestAnimationFrame(() => {
+                playSnippets();
+            });
         }
     };
 
@@ -1116,25 +880,6 @@ function AudioSnippetPlayer({ videoId, onComplete, onError, autoPlay = true, isM
             )}
             <div ref={containerARef} style={{ position: 'absolute', left: '-9999px', width: IS_MOBILE ? 250 : 1, height: IS_MOBILE ? 250 : 1 }} />
             <div ref={containerBRef} style={{ position: 'absolute', left: '-9999px', width: IS_MOBILE ? 250 : 1, height: IS_MOBILE ? 250 : 1 }} />
-            {/* Debug badge */}
-            {IS_MOBILE && (
-                <div style={{
-                    position: 'fixed',
-                    top: '10px',
-                    right: '10px',
-                    background: 'rgba(0,0,0,0.8)',
-                    color: 'white',
-                    padding: '6px 10px',
-                    borderRadius: '4px',
-                    fontSize: '11px',
-                    fontFamily: 'monospace',
-                    zIndex: 9999,
-                    maxWidth: '200px',
-                    wordBreak: 'break-word'
-                }}>
-                    {debug}
-                </div>
-            )}
         </div>
     );
 }
@@ -1148,19 +893,6 @@ function TrackCard({ track, onSwipe, style, showYouTube, onToggleYouTube, onSnip
     const dragOffsetRef = useRef({ x: 0, y: 0 });
     const hasDraggedRef = useRef(false);
     dragOffsetRef.current = dragOffset;
-    
-    // Diagnostic logging: Track component mount/unmount
-    useEffect(() => {
-        if (window.__hardLog) window.__hardLog("TRACKCARD_MOUNT: trackId=" + (track?.id || 'null') + " name=" + (track?.name || 'null'));
-        return () => {
-            if (window.__hardLog) window.__hardLog("TRACKCARD_UNMOUNT: trackId=" + (track?.id || 'null') + " name=" + (track?.name || 'null'));
-        };
-    }, [track?.id, track?.name]);
-    
-    // Diagnostic logging: Track component render
-    useEffect(() => {
-        if (window.__hardLog) window.__hardLog("TRACKCARD_RENDER: trackId=" + (track?.id || 'null'));
-    });
     
     const handlePointerDown = (e) => {
         try {
@@ -1648,7 +1380,6 @@ function ExportToYouTubeModal({ isOpen, onClose, likedTracks }) {
 
 // Vinyl Stack Sidebar
 function VinylStack({ currentList, savedPlaylists, onUpdatePlaylists }) {
-    const debugLogs = window.__DEBUG_LOGS__ || [];
     const [isOpen, setIsOpen] = useState(false);
     const [showExportModal, setShowExportModal] = useState(false);
     const [showSaveModal, setShowSaveModal] = useState(false);
@@ -1885,58 +1616,12 @@ function VinylStack({ currentList, savedPlaylists, onUpdatePlaylists }) {
                 onClose={() => setShowExportModal(false)}
                 likedTracks={activeTracks}
             />
-            
-            {/* Debug Overlay */}
-            {debugLogs.length > 0 && (
-                <div style={{
-                    position: 'fixed',
-                    bottom: '10px',
-                    left: '10px',
-                    right: '10px',
-                    maxHeight: '200px',
-                    overflowY: 'auto',
-                    background: 'rgba(0,0,0,0.9)',
-                    color: 'white',
-                    padding: '10px',
-                    borderRadius: '4px',
-                    fontSize: '10px',
-                    fontFamily: 'monospace',
-                    zIndex: 10000,
-                    wordBreak: 'break-word'
-                }}>
-                    <div style={{ fontWeight: 'bold', marginBottom: '5px' }}>Debug Logs (last 10):</div>
-                    {debugLogs.map((log, idx) => (
-                        <div key={idx} style={{ marginBottom: '2px', opacity: 0.9 }}>
-                            {log}
-                        </div>
-                    ))}
-                </div>
-            )}
         </>
     );
 }
 
 const PLAYLISTS_KEY = 'cosinder_playlists';
 const IS_MOBILE = /iPad|iPhone|iPod|Android/i.test(navigator.userAgent) || ('ontouchstart' in window);
-// Initialize global debug logs
-if (typeof window !== 'undefined' && !window.__DEBUG_LOGS__) {
-    window.__DEBUG_LOGS__ = [];
-    window.__log = (msg) => {
-        const timestamp = new Date().toISOString();
-        window.__DEBUG_LOGS__.push(`[${timestamp}] ${msg}`);
-        if (window.__DEBUG_LOGS__.length > 50) {
-            window.__DEBUG_LOGS__.shift();
-        }
-    };
-    
-    window.addEventListener('error', (e) => {
-        window.__log("ERROR: " + e.message);
-    });
-    
-    window.addEventListener('unhandledrejection', (e) => {
-        window.__log("REJECT: " + (e.reason?.message || e.reason));
-    });
-}
 
 function loadPlaylists() {
     const saved = localStorage.getItem(PLAYLISTS_KEY);
@@ -2010,20 +1695,7 @@ function App() {
     const [hasStarted, setHasStarted] = useState(false);
     const [snippetComplete, setSnippetComplete] = useState(false);
     const [isMuted, setIsMuted] = useState(IS_MOBILE);
-    const [debugLogs, setDebugLogs] = useState([]);
     const seenTrackIdsRef = useRef(new Set());
-    
-    // Update debug logs from global array
-    useEffect(() => {
-        const updateLogs = () => {
-            if (window.__DEBUG_LOGS__) {
-                setDebugLogs([...window.__DEBUG_LOGS__].slice(-8));
-            }
-        };
-        updateLogs();
-        const interval = setInterval(updateLogs, 500);
-        return () => clearInterval(interval);
-    }, []);
     
     // Persist playlists to localStorage
     useEffect(() => {
@@ -2083,26 +1755,12 @@ function App() {
         setHasStarted(true);
         seenTrackIdsRef.current = new Set(); // Reset seen tracks for new session
         const similarTracks = await fetchSimilarTracks(track);
-        if (window.__log) window.__log("SEARCH_RESULTS len=" + similarTracks.length);
         setStack(similarTracks);
         setCurrentCardIndex(0);
         setSnippetComplete(false);
     };
     
     const handleSwipe = async (direction) => {
-        if (window.__hardLog) window.__hardLog("SWIPE_START: direction=" + direction + " currentCardIndex=" + currentCardIndex + " stackLen=" + stack.length + " trackId=" + (stack[currentCardIndex]?.id || 'null'));
-        if (window.__log) window.__log("SWIPE_START");
-        
-        // Diagnostic: Log stack trace to see what called handleSwipe
-        if (window.__hardLog) {
-            try {
-                throw new Error("SWIPE_CALL_STACK");
-            } catch (e) {
-                const stackLines = (e.stack || 'no stack').split('\n').slice(0, 5).join(' | ');
-                window.__hardLog("SWIPE_CALL_STACK: " + stackLines);
-            }
-        }
-        
         if (!IS_MOBILE) setIsMuted(false);
         const currentTrack = stack[currentCardIndex];
         
@@ -2121,21 +1779,15 @@ function App() {
             // Fetch similar tracks and add to stack
             const similarTracks = await fetchSimilarTracks(currentTrack);
             
-            let newStackLength = 0;
             setStack(prev => {
                 const remaining = prev.slice(currentCardIndex + 1);
                 // Filter out tracks that have already been seen in this session
                 const newTracks = similarTracks.filter(track => !seenTrackIdsRef.current.has(track.id));
-                const combined = [...remaining, ...newTracks];
-                const shuffled = shuffleArray(combined);
-                newStackLength = shuffled.length;
-                return shuffled;
+                return shuffleArray([...remaining, ...newTracks]);
             });
-            if (window.__log) window.__log("DECK_ADVANCE index=0 len=" + newStackLength);
             setCurrentCardIndex(0);
         } else {
             // Dislike - just move to next
-            if (window.__log) window.__log("DECK_ADVANCE index=" + (currentCardIndex + 1) + " len=" + stack.length);
             setCurrentCardIndex(prev => prev + 1);
         }
         
@@ -2144,26 +1796,12 @@ function App() {
     };
     
     const handleVideoError = (errorCode) => {
-        if (window.__hardLog) window.__hardLog("VIDEO_ERROR: errorCode=" + errorCode + " currentCardIndex=" + currentCardIndex + " stackLen=" + stack.length);
-        console.log('Video unavailable (error code:', errorCode, '), auto-skipping...');
-        // Auto-skip to next track (swipe left)
-        setTimeout(() => {
-            if (window.__hardLog) window.__hardLog("VIDEO_ERROR: calling handleSwipe('left') after 500ms");
-            handleSwipe('left');
-        }, 500); // Small delay to show the error state
+        if (window.__hardLog) window.__hardLog("VIDEO_ERROR: errorCode=" + errorCode + " trackId=" + (stack[currentCardIndex]?.id || 'null') + ", auto-skipping");
+        // Auto-skip to next track (swipe left) after a small delay to show the error state
+        setTimeout(() => handleSwipe('left'), 500);
     };
     
     const currentTrack = stack[currentCardIndex];
-    
-    // Diagnostic logging: App render state
-    useEffect(() => {
-        if (window.__hardLog) window.__hardLog("APP_RENDER: currentCardIndex=" + currentCardIndex + " stackLen=" + stack.length + " currentTrack=" + (currentTrack?.id || 'null') + " hasStarted=" + hasStarted + " loading=" + loading);
-    });
-    
-    // Diagnostic logging: Track changes
-    useEffect(() => {
-        if (window.__hardLog) window.__hardLog("TRACK_CHANGE: currentCardIndex=" + currentCardIndex + " trackId=" + (currentTrack?.id || 'null') + " trackName=" + (currentTrack?.name || 'null'));
-    }, [currentCardIndex, currentTrack?.id]);
     
     return (
         <div className="min-h-screen flex flex-col items-center justify-center p-8 bg-[#fdf8f8]">
@@ -2187,8 +1825,6 @@ function App() {
             )}
             
             {/* Card Stack */}
-            {!loading && !currentTrack && window.__hardLog && window.__hardLog("APP_RENDER_NO_CARD: currentCardIndex=" + currentCardIndex + " stackLen=" + stack.length + " hasStarted=" + hasStarted + " loading=" + loading)}
-            {!loading && currentTrack && window.__hardLog && window.__hardLog("APP_RENDER_CARD: rendering TrackCard trackId=" + currentTrack.id + " currentCardIndex=" + currentCardIndex)}
             {!loading && currentTrack && (
                 <div className="card-stack relative">
                     <CardErrorBoundary key={currentTrack.id}>
@@ -2197,10 +1833,7 @@ function App() {
                             onSwipe={handleSwipe}
                             showYouTube={showYouTube}
                             onToggleYouTube={() => setShowYouTube(!showYouTube)}
-                            onSnippetComplete={() => {
-                                if (window.__hardLog) window.__hardLog("SNIPPET_COMPLETE: called currentCardIndex=" + currentCardIndex + " stackLen=" + stack.length);
-                                setSnippetComplete(true);
-                            }}
+                            onSnippetComplete={() => setSnippetComplete(true)}
                             onVideoError={handleVideoError}
                             isMuted={isMuted}
                             onMuteToggle={() => setIsMuted(prev => !prev)}
@@ -2241,30 +1874,6 @@ function App() {
                 </div>
             )}
             
-            {/* Debug Overlay */}
-            <div style={{
-                position: 'fixed',
-                top: '10px',
-                left: '10px',
-                maxWidth: '400px',
-                maxHeight: '200px',
-                overflowY: 'auto',
-                background: 'rgba(0,0,0,0.9)',
-                color: 'white',
-                padding: '10px',
-                borderRadius: '4px',
-                fontSize: '10px',
-                fontFamily: 'monospace',
-                zIndex: 999999,
-                wordBreak: 'break-word'
-            }}>
-                <div style={{ fontWeight: 'bold', marginBottom: '5px' }}>Debug Logs (last 8):</div>
-                {debugLogs.map((log, idx) => (
-                    <div key={idx} style={{ marginBottom: '2px', opacity: 0.9 }}>
-                        {log}
-                    </div>
-                ))}
-            </div>
         </div>
     );
 }

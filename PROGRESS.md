@@ -1,5 +1,7 @@
 # DJ Music Discovery - Progress Report
 
+_Last updated: July 10, 2026_
+
 ## ✅ Working Features (MVP Core)
 
 ### 1. Search & Autocomplete
@@ -7,95 +9,45 @@
 - ✅ Autocomplete dropdown showing 10 results
 - ✅ Proxy server handling CORS issues
 - ✅ Track selection triggers game start
+- ✅ Bottom search bar for switching seed track mid-session
 
 ### 2. Card Stack Interface
-- ✅ Beautiful gradient background
 - ✅ Card displays track name and similarity
 - ✅ "Show Full Track" button
-- ✅ Stack counter (Track X of 100)
-- ✅ Swipe instructions visible
+- ✅ Drag-to-swipe (mouse and touch), 100px threshold
+- ✅ Keyboard shortcuts (arrow keys to swipe, space to mute)
+- ✅ Error boundary around the card (a bad card shows a Retry fallback instead of killing the app)
 
-### 3. Vinyl Stack Sidebar
-- ✅ Toggle button with counter badge
-- ✅ Sidebar slides in/out
-- ✅ Vinyl record visualization
-- ✅ "Clear All" button
-- ✅ Empty state message
+### 3. Audio Playback
+- ✅ 3x 5-second snippets via YouTube IFrame API
+- ✅ Desktop: dual-player crossfades; autoplay per card
+- ✅ Mobile: per-card play button (autoplay policy), single player, seek-based snippet advance
+- ✅ Mute/unmute; hold a snippet dot to keep playing
+- ✅ Auto-skip genuinely unavailable videos (error 2/5/100/101/150 before playback starts); errors after playback starts are ignored (v4 fix)
 
-### 4. Data Flow
-- ✅ Fetches 100 similar tracks from cosine.club
-- ✅ Parses HTML responses correctly
-- ✅ Builds initial stack
+### 4. Dynamic Stack Growth
+- ✅ Right swipe fetches 100 similar tracks, dedupes seen tracks, shuffles into the stack
 
-### 5. Local Storage
-- ✅ Liked tracks persist across sessions
-- ✅ Loads on app start
+### 5. Persistence & Playlists
+- ✅ Liked tracks persist in localStorage
+- ✅ Vinyl stack sidebar with saved playlists
+- ✅ Export to YouTube playlist (OAuth via server)
 
-## 🚧 In Progress / Needs Work
+## 🐛 Fixed (July 2026)
 
-### 1. Swipe Mechanics
-- ⚠️ Mouse drag implemented but needs testing
-- ⚠️ Swipe threshold set to 100px
-- ⚠️ Visual feedback (heart/X) implemented
-- ❌ Touch gestures for mobile not yet added
+- **iOS card crash on play tap** — YT.Player replaces its target div with an iframe; the divs were React-rendered, so any re-render threw Safari `NotFoundError` and unmounted the whole tree. Player targets are now created imperatively inside stable containers React never reconciles.
+- **Silent mobile audio** — first play tap now unmutes the session (`onSessionGesture`); volume was previously always set to 0 on mobile.
+- **False-positive auto-skips** — v4 fix (gate on `hasStartedPlaybackRef`) is now actually implemented.
+- **Deck frozen** — leftover `FREEZE_DECK` diagnostic flag removed.
 
-### 2. Audio Playback
-- ❌ 3x 5-second snippets NOT YET IMPLEMENTED
-- ❌ YouTube IFrame API integration needed
-- ❌ Fade transitions between snippets
-- ✅ YouTube player container ready
-- ✅ "Show Full Track" button works
+## 🚧 Not Implemented / Nice to Have
 
-### 3. Dynamic Stack Growth
-- ⚠️ Swipe right triggers fetch (code written)
-- ⚠️ Shuffle algorithm implemented
-- ❌ NOT TESTED YET - need to verify it works
+- Preloading/buffering for smoother snippet starts
+- Undo last swipe
+- Filter by BPM/year/genre
+- Multiple seed tracks, session history
+- Server hardening: proxy passes through upstream status, timeouts, OAuth state verification, token persistence
 
-### 4. Buffering/Preloading
-- ❌ NOT IMPLEMENTED
-- This is "nice to have" for MVP
+## 🔍 Debugging
 
-## 🎯 Next Steps (Priority Order)
-
-### Critical for MVP
-1. **Test swipe mechanics** - Verify left/right swipe works
-2. **Test stack growth** - Swipe right should fetch + shuffle new tracks
-3. **Implement 3x5s audio snippets** - Core feature
-   - Load YouTube IFrame API
-   - Seek to 3 positions (start, middle, end)
-   - Play 5 seconds each
-   - Add fade transitions
-
-### Nice to Have
-4. Add keyboard shortcuts (arrow keys)
-5. Improve mobile touch gestures
-6. Add undo button
-7. Better error handling
-8. Loading states for track fetching
-
-## 🐛 Known Issues
-
-1. **Similarity shows "N/A"** - First track in stack doesn't have similarity data (it's the seed track)
-2. **No audio yet** - Main feature still missing
-3. **Swipe untested** - Need to verify drag-to-swipe works properly
-
-## 📊 MVP Completion Status
-
-**Overall: ~60% Complete**
-
-- Search: 100% ✅
-- UI/Layout: 90% ✅
-- Data fetching: 100% ✅
-- Swipe mechanics: 70% ⚠️
-- Audio snippets: 0% ❌
-- Stack management: 80% ⚠️
-- Vinyl sidebar: 100% ✅
-
-## 🚀 Deployment Ready?
-
-**Not yet** - Need audio snippets working first. That's the core value proposition.
-
-Once audio is done, can deploy to:
-- Netlify (drag & drop)
-- Vercel
-- Any Node.js host (for the proxy server)
+A HARD DEBUG overlay (top-left, outside React) logs errors and key events, persists to localStorage, and can be hidden/shown for demos (preference persists).

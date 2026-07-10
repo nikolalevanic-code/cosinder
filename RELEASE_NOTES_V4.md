@@ -1,5 +1,10 @@
 # DJ Music Discovery - Release Notes v4.0
 
+> **Correction (July 10, 2026):** the fix described below was documented but never
+> actually wired into `onError` — `hasStartedPlaybackRef` was set but never checked,
+> so mid-playback error 150 still auto-skipped cards. It is now implemented for all
+> error codes: any error after playback has started is logged and ignored.
+
 ## Version 4.0 - Fixed Auto-Skip False Positives (Feb 9, 2026)
 
 ### 🐛 Bug Fix: False Positive Auto-Skips
