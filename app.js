@@ -392,6 +392,7 @@ function AudioSnippetPlayer({ videoId, onComplete, onError, autoPlay = true, isM
         if (!videoId) return;
 
         hasPlayedRef.current = false;
+        hasStartedPlaybackRef.current = false; // Reset per card so real load errors on new videos still auto-skip
         setCurrentSnippet(0);
         setIsPlaying(false);
         setPlayerReady(false);
@@ -439,6 +440,13 @@ function AudioSnippetPlayer({ videoId, onComplete, onError, autoPlay = true, isM
                     },
                     onError: (ev) => {
                         const code = ev.data;
+                        // Once playback has started, errors are false positives
+                        // (e.g. error 150 firing mid-play on iOS) - never
+                        // auto-skip a card the user is actively listening to.
+                        if (hasStartedPlaybackRef.current) {
+                            if (window.__hardLog) window.__hardLog("YT_ERROR_IGNORED: code=" + code + " (playback already started)");
+                            return;
+                        }
                         const critical = [100, 101, 150].includes(code);
                         if (critical && onError) {
                             onError(code);
@@ -1910,8 +1918,6 @@ function VinylStack({ currentList, savedPlaylists, onUpdatePlaylists }) {
 
 const PLAYLISTS_KEY = 'cosinder_playlists';
 const IS_MOBILE = /iPad|iPhone|iPod|Android/i.test(navigator.userAgent) || ('ontouchstart' in window);
-const FREEZE_DECK = true;
-
 // Initialize global debug logs
 if (typeof window !== 'undefined' && !window.__DEBUG_LOGS__) {
     window.__DEBUG_LOGS__ = [];
@@ -2126,26 +2132,11 @@ function App() {
                 return shuffled;
             });
             if (window.__log) window.__log("DECK_ADVANCE index=0 len=" + newStackLength);
-            if (window.__hardLog) window.__hardLog("SWIPE_RIGHT: about to set currentCardIndex=0 newStackLen=" + newStackLength);
-            if (FREEZE_DECK) {
-                if (window.__log) window.__log("DECK_ADVANCE_BLOCKED");
-                if (window.__hardLog) window.__hardLog("SWIPE_RIGHT_BLOCKED: FREEZE_DECK=true");
-                return;
-            }
             setCurrentCardIndex(0);
-            if (window.__hardLog) window.__hardLog("SWIPE_RIGHT: setCurrentCardIndex(0) called");
         } else {
             // Dislike - just move to next
-            const newIndex = currentCardIndex + 1;
-            if (window.__log) window.__log("DECK_ADVANCE index=" + newIndex + " len=" + stack.length);
-            if (window.__hardLog) window.__hardLog("SWIPE_LEFT: about to set currentCardIndex=" + newIndex + " stackLen=" + stack.length);
-            if (FREEZE_DECK) {
-                if (window.__log) window.__log("DECK_ADVANCE_BLOCKED");
-                if (window.__hardLog) window.__hardLog("SWIPE_LEFT_BLOCKED: FREEZE_DECK=true");
-                return;
-            }
+            if (window.__log) window.__log("DECK_ADVANCE index=" + (currentCardIndex + 1) + " len=" + stack.length);
             setCurrentCardIndex(prev => prev + 1);
-            if (window.__hardLog) window.__hardLog("SWIPE_LEFT: setCurrentCardIndex(prev => prev + 1) called");
         }
         
         setShowYouTube(false);
