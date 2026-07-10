@@ -80,26 +80,40 @@
         }
     };
     
-    // Hard log function
+    // Hard log function - defensive: must NEVER throw or go silent.
+    // If any step fails, remaining steps still run so a single failure
+    // (e.g. corrupted logs array, detached overlay) cannot blind us.
     window.__hardLog = function(msg) {
-        const timestamp = new Date().toISOString();
-        const entry = `[${timestamp}] ${msg}`;
-        window.__hard_logs__.push(entry);
-        if (window.__hard_logs__.length > 200) {
-            window.__hard_logs__.shift();
-        }
-        // Persist to localStorage
         try {
-            localStorage.setItem('__hard_logs__', JSON.stringify(window.__hard_logs__));
+            const timestamp = new Date().toISOString();
+            const entry = `[${timestamp}] ${msg}`;
+            try {
+                if (!Array.isArray(window.__hard_logs__)) window.__hard_logs__ = [];
+                window.__hard_logs__.push(entry);
+                if (window.__hard_logs__.length > 200) {
+                    window.__hard_logs__.shift();
+                }
+            } catch (e) {}
+            // Persist to localStorage
+            try {
+                localStorage.setItem('__hard_logs__', JSON.stringify(window.__hard_logs__));
+            } catch (e) {}
+            // Update overlay content only (do not change visibility)
+            try {
+                updateHardDebugOverlay();
+            } catch (e) {}
         } catch (e) {}
-        // Update overlay content only (do not change visibility)
-        updateHardDebugOverlay();
     };
     
     // Update overlay function - only updates pre content
     function updateHardDebugOverlay() {
         var overlay = document.getElementById('__hard_debug_overlay__');
-        if (!overlay) {
+        if (!overlay || !overlay.isConnected) {
+            if (overlay && !overlay.isConnected) {
+                // Overlay got detached somehow - remove stale wrapper so it rebuilds
+                var staleWrapper = document.getElementById('__hard_debug_wrapper__');
+                if (staleWrapper) staleWrapper.remove();
+            }
             var o = ensureWrapperAndOverlay();
             overlay = o.overlay;
         }
@@ -107,18 +121,29 @@
         overlay.textContent = 'HARD DEBUG (last 25):\n' + last25.join('\n');
     }
     
-    // Error handler
+    // Error handler - capture stack when available (e.message alone is
+    // useless for cross-origin "Script error." entries)
     window.addEventListener('error', function(e) {
-        window.__hardLog('ERROR: ' + e.message + ' filename=' + (e.filename || 'unknown') + ' lineno=' + (e.lineno || '?') + ' colno=' + (e.colno || '?'));
+        var stack = '';
+        try {
+            stack = e.error && e.error.stack ? ' stack=' + String(e.error.stack).substring(0, 300) : '';
+        } catch (err) {}
+        window.__hardLog('ERROR: ' + e.message + ' filename=' + (e.filename || 'unknown') + ' lineno=' + (e.lineno || '?') + ' colno=' + (e.colno || '?') + stack);
         // Diagnostic: Log if this is a Script error
-        if (e.message === 'Script error.' || e.message.includes('Script error')) {
+        if (e.message === 'Script error.' || (e.message && e.message.includes('Script error'))) {
             window.__hardLog('SCRIPT_ERROR_DETECTED: This is a cross-origin Script error');
         }
     });
     
     // Unhandled rejection handler
     window.addEventListener('unhandledrejection', function(e) {
-        window.__hardLog('REJECT: ' + (e.reason?.message || e.reason || 'unknown'));
+        var reason = 'unknown';
+        var stack = '';
+        try {
+            reason = (e.reason && e.reason.message) || String(e.reason) || 'unknown';
+            stack = e.reason && e.reason.stack ? ' stack=' + String(e.reason.stack).substring(0, 300) : '';
+        } catch (err) {}
+        window.__hardLog('REJECT: ' + reason + stack);
     });
     
     // Pagehide handler (detect navigation/reload)
@@ -326,7 +351,12 @@ function fadeVolume(player, fromVol, toVol, durationMs, onDone) {
 function AudioSnippetPlayer({ videoId, onComplete, onError, autoPlay = true, isMuted, onMuteToggle, onSessionGesture }) {
     const playerARef = useRef(null);
     const playerBRef = useRef(null);
-    const idBase = useRef(`yt-${Math.random().toString(36).substr(2, 9)}`);
+    // Stable React-rendered containers. The divs that YT.Player REPLACES with
+    // iframes are created imperatively inside these, because React must never
+    // reconcile a node the YouTube API has swapped out (causes Safari
+    // NotFoundError "The object can not be found here." -> tree unmount).
+    const containerARef = useRef(null);
+    const containerBRef = useRef(null);
     const [currentSnippet, setCurrentSnippet] = useState(0);
     const [isPlaying, setIsPlaying] = useState(false);
     const [playerReady, setPlayerReady] = useState(false);
@@ -378,7 +408,6 @@ function AudioSnippetPlayer({ videoId, onComplete, onError, autoPlay = true, isM
                 setTimeout(initPlayer, 100);
                 return;
             }
-            const base = idBase.current;
             const makeOnReady = () => {
                 return () => {
                     setPlayerReady(true);
@@ -419,11 +448,31 @@ function AudioSnippetPlayer({ videoId, onComplete, onError, autoPlay = true, isM
                     }
                 }
             };
+            // Create the target divs imperatively inside the stable React
+            // containers. YT.Player replaces these divs with iframes; since
+            // React renders the containers empty, it never reconciles the
+            // replaced nodes.
+            const makeTarget = (container) => {
+                if (!container) return null;
+                container.innerHTML = '';
+                const target = document.createElement('div');
+                container.appendChild(target);
+                return target;
+            };
             try {
-                playerARef.current = new YT.Player(base + '-A', opts);
+                const targetA = makeTarget(containerARef.current);
+                if (!targetA) {
+                    if (window.__hardLog) window.__hardLog('PLAYER_INIT_ERROR: containerA missing');
+                    onComplete();
+                    return;
+                }
+                playerARef.current = new YT.Player(targetA, opts);
                 if (!IS_MOBILE) {
-                    const optsB = { ...opts, events: { ...opts.events, onReady: makeOnReady() } };
-                    playerBRef.current = new YT.Player(base + '-B', optsB);
+                    const targetB = makeTarget(containerBRef.current);
+                    if (targetB) {
+                        const optsB = { ...opts, events: { ...opts.events, onReady: makeOnReady() } };
+                        playerBRef.current = new YT.Player(targetB, optsB);
+                    }
                 }
             } catch (e) {
                 console.error('[snippets] Error creating players:', e);
@@ -439,6 +488,12 @@ function AudioSnippetPlayer({ videoId, onComplete, onError, autoPlay = true, isM
             if (fadeIntervalRef.current && typeof fadeIntervalRef.current === 'function') fadeIntervalRef.current();
             [playerARef.current, playerBRef.current].forEach(p => {
                 if (p && p.destroy) try { p.destroy(); } catch (e) {}
+            });
+            playerARef.current = null;
+            playerBRef.current = null;
+            // Clear any leftover iframes from the containers (imperative DOM, React doesn't manage it)
+            [containerARef.current, containerBRef.current].forEach(c => {
+                if (c) try { c.innerHTML = ''; } catch (e) {}
             });
         };
     }, [videoId]);
@@ -895,12 +950,20 @@ function AudioSnippetPlayer({ videoId, onComplete, onError, autoPlay = true, isM
                 }
             });
             
-            // OPTION 1: Skip onMuteToggle on first tap to avoid immediate setVolume() call
-            // Volume will be set in playSnippets() after delay when player is ready
+            // First tap: unmute at the App level (session gesture) so the
+            // deferred setVolume in playSnippets targets 100, not 0. The
+            // isInitialPlaybackSetupRef guard still defers the actual
+            // setVolume call until the player is ready.
             if (wasAudioDisabled) {
-                if (window.__hardLog) window.__hardLog("PLAY_STATE: skipping onMuteToggle on first tap (will set volume in playSnippets)");
-                // Mark that we're in initial playback setup to guard useEffect
                 isInitialPlaybackSetupRef.current = true;
+                if (onSessionGesture) {
+                    try {
+                        if (window.__hardLog) window.__hardLog("PLAY_STATE: calling onSessionGesture to unmute session");
+                        onSessionGesture();
+                    } catch (e) {
+                        if (window.__hardLog) window.__hardLog("PLAY_ERROR: onSessionGesture " + (e?.message || e || 'unknown'));
+                    }
+                }
             } else {
                 // Only call onMuteToggle if audio was already enabled (subsequent taps)
                 if (isMuted && onMuteToggle) {
@@ -1043,8 +1106,8 @@ function AudioSnippetPlayer({ videoId, onComplete, onError, autoPlay = true, isM
                     )}
                 </>
             )}
-            <div id={idBase.current + '-A'} style={{ position: 'absolute', left: '-9999px', width: IS_MOBILE ? 250 : 1, height: IS_MOBILE ? 250 : 1 }} />
-            <div id={idBase.current + '-B'} style={{ position: 'absolute', left: '-9999px', width: IS_MOBILE ? 250 : 1, height: IS_MOBILE ? 250 : 1 }} />
+            <div ref={containerARef} style={{ position: 'absolute', left: '-9999px', width: IS_MOBILE ? 250 : 1, height: IS_MOBILE ? 250 : 1 }} />
+            <div ref={containerBRef} style={{ position: 'absolute', left: '-9999px', width: IS_MOBILE ? 250 : 1, height: IS_MOBILE ? 250 : 1 }} />
             {/* Debug badge */}
             {IS_MOBILE && (
                 <div style={{
@@ -1888,6 +1951,48 @@ function loadPlaylists() {
     return { currentList: [], savedPlaylists: [] };
 }
 
+// Error boundary: catches render/lifecycle errors in the card subtree so an
+// uncaught error no longer unmounts the entire React tree (the "card vanishes,
+// app dead" symptom). componentDidCatch gives us the real error + component
+// stack that window.onerror can't see for cross-origin "Script error." cases.
+class CardErrorBoundary extends React.Component {
+    constructor(props) {
+        super(props);
+        this.state = { error: null };
+    }
+    
+    static getDerivedStateFromError(error) {
+        return { error: error || new Error('unknown') };
+    }
+    
+    componentDidCatch(error, errorInfo) {
+        if (window.__hardLog) {
+            window.__hardLog('BOUNDARY_CAUGHT: ' + (error?.message || error || 'unknown')
+                + ' stack=' + String(error?.stack || 'none').substring(0, 300));
+            window.__hardLog('BOUNDARY_COMPONENT_STACK: ' + String(errorInfo?.componentStack || 'none').substring(0, 300));
+        }
+    }
+    
+    render() {
+        if (this.state.error) {
+            return (
+                <div className="flex flex-col items-center gap-4 p-8 bg-white rounded-2xl shadow-lg max-w-sm text-center">
+                    <p className="text-[#3d3a42] font-semibold">Something went wrong with this card.</p>
+                    <p className="text-[#6b6570] text-sm break-words">{String(this.state.error?.message || this.state.error)}</p>
+                    <button
+                        type="button"
+                        className="px-4 py-2 rounded-full bg-[#3d3a42] text-white text-sm"
+                        onClick={() => this.setState({ error: null })}
+                    >
+                        Retry
+                    </button>
+                </div>
+            );
+        }
+        return this.props.children;
+    }
+}
+
 // Main App
 function App() {
     const [stack, setStack] = useState([]);
@@ -2095,21 +2200,23 @@ function App() {
             {!loading && currentTrack && window.__hardLog && window.__hardLog("APP_RENDER_CARD: rendering TrackCard trackId=" + currentTrack.id + " currentCardIndex=" + currentCardIndex)}
             {!loading && currentTrack && (
                 <div className="card-stack relative">
-                    <TrackCard
-                        track={currentTrack}
-                        onSwipe={handleSwipe}
-                        showYouTube={showYouTube}
-                        onToggleYouTube={() => setShowYouTube(!showYouTube)}
-                        onSnippetComplete={() => {
-                            if (window.__hardLog) window.__hardLog("SNIPPET_COMPLETE: called currentCardIndex=" + currentCardIndex + " stackLen=" + stack.length);
-                            setSnippetComplete(true);
-                        }}
-                        onVideoError={handleVideoError}
-                        isMuted={isMuted}
-                        onMuteToggle={() => setIsMuted(prev => !prev)}
-                        onSessionGesture={IS_MOBILE ? () => setIsMuted(false) : undefined}
-                        style={{ position: 'relative', zIndex: 10 }}
-                    />
+                    <CardErrorBoundary key={currentTrack.id}>
+                        <TrackCard
+                            track={currentTrack}
+                            onSwipe={handleSwipe}
+                            showYouTube={showYouTube}
+                            onToggleYouTube={() => setShowYouTube(!showYouTube)}
+                            onSnippetComplete={() => {
+                                if (window.__hardLog) window.__hardLog("SNIPPET_COMPLETE: called currentCardIndex=" + currentCardIndex + " stackLen=" + stack.length);
+                                setSnippetComplete(true);
+                            }}
+                            onVideoError={handleVideoError}
+                            isMuted={isMuted}
+                            onMuteToggle={() => setIsMuted(prev => !prev)}
+                            onSessionGesture={IS_MOBILE ? () => setIsMuted(false) : undefined}
+                            style={{ position: 'relative', zIndex: 10 }}
+                        />
+                    </CardErrorBoundary>
                 </div>
             )}
             
