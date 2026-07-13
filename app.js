@@ -348,7 +348,18 @@ function fadeVolume(player, fromVol, toVol, durationMs, onDone) {
 }
 
 // Audio Snippet Player Component
-function AudioSnippetPlayer({ videoId, onComplete, onError, autoPlay = true, isMuted, onMuteToggle, onSessionGesture }) {
+function AudioSnippetPlayer({
+    videoId,
+    onComplete,
+    onError,
+    autoPlay = true,
+    isMuted,
+    onMuteToggle,
+    onSessionGesture,
+    persistent = false,
+    sessionAudioEnabled = false,
+    controllerRef
+}) {
     const playerARef = useRef(null);
     const playerBRef = useRef(null);
     // Stable React-rendered containers. The divs that YT.Player REPLACES with
@@ -379,32 +390,92 @@ function AudioSnippetPlayer({ videoId, onComplete, onError, autoPlay = true, isM
     const pressStartRef = useRef(0);
     const playButtonHandledRef = useRef(false);
     const seekTimeoutRef = useRef(null);
+    const loadedVideoIdRef = useRef(null);
+    const pendingAutoplayRef = useRef(false);
 
     isMutedRef.current = isMuted ?? false;
     hasAudioEnabledRef.current = hasAudioEnabled;
 
     const getPlayer = (which) => which === 'A' ? playerARef.current : playerBRef.current;
 
+    const clearSnippetTimers = () => {
+        if (snippetTimerRef.current) clearTimeout(snippetTimerRef.current);
+        if (seekTimeoutRef.current) clearTimeout(seekTimeoutRef.current);
+        if (fadeIntervalRef.current && typeof fadeIntervalRef.current === 'function') fadeIntervalRef.current();
+        snippetTimerRef.current = null;
+        seekTimeoutRef.current = null;
+    };
+
+    const resetSnippetStateForNewTrack = () => {
+        hasPlayedRef.current = false;
+        hasStartedPlaybackRef.current = false;
+        setCurrentSnippet(0);
+        setIsPlaying(false);
+        setHoldingDot(null);
+        isInitialPlaybackSetupRef.current = false;
+        clearSnippetTimers();
+    };
+
+    // Keep mobile session unlock in sync when using a persistent player
+    useEffect(() => {
+        if (!persistent || !IS_MOBILE) return;
+        if (sessionAudioEnabled) {
+            hasAudioEnabledRef.current = true;
+            setHasAudioEnabled(true);
+        }
+    }, [sessionAudioEnabled, persistent]);
+
     useEffect(() => {
         if (!videoId) return;
 
-        hasPlayedRef.current = false;
-        hasStartedPlaybackRef.current = false; // Reset per card so real load errors on new videos still auto-skip
-        setCurrentSnippet(0);
-        setIsPlaying(false);
-        setPlayerReady(false);
-        setHoldingDot(null);
-        const initialAudioEnabled = !IS_MOBILE;
-        setHasAudioEnabled(initialAudioEnabled); // Reset to initial state: false on mobile, true on desktop
-        hasAudioEnabledRef.current = initialAudioEnabled;
-        playersReadyRef.current = 0;
-        isInitialPlaybackSetupRef.current = false; // Reset guard flag for new video
+        // Skip if beginTrack() already loaded this video (e.g. from swipe gesture)
+        if (persistent && loadedVideoIdRef.current === videoId) return;
+        loadedVideoIdRef.current = videoId;
+
+        resetSnippetStateForNewTrack();
+
+        if (persistent) {
+            if (IS_MOBILE) {
+                hasAudioEnabledRef.current = sessionAudioEnabled || hasAudioEnabledRef.current;
+                setHasAudioEnabled(hasAudioEnabledRef.current);
+            }
+        } else {
+            const initialAudioEnabled = !IS_MOBILE;
+            setHasAudioEnabled(initialAudioEnabled);
+            hasAudioEnabledRef.current = initialAudioEnabled;
+            playersReadyRef.current = 0;
+            setPlayerReady(false);
+        }
 
         const initPlayer = () => {
             if (typeof YT === 'undefined' || !YT.Player) {
                 setTimeout(initPlayer, 100);
                 return;
             }
+
+            const canAutoplay = () => IS_MOBILE ? hasAudioEnabledRef.current : true;
+
+            const maybeAutoplay = () => {
+                if (autoPlay && !hasPlayedRef.current && canAutoplay()) {
+                    hasPlayedRef.current = true;
+                    playSnippets();
+                }
+            };
+
+            // Reuse existing iframe — loadVideoById keeps the blessed media element alive on iOS
+            if (persistent && playerARef.current && typeof playerARef.current.loadVideoById === 'function') {
+                try {
+                    playerARef.current.loadVideoById(videoId);
+                    setPlayerReady(true);
+                    playersReadyRef.current = IS_MOBILE ? 1 : 2;
+                    pendingAutoplayRef.current = autoPlay && canAutoplay();
+                    if (pendingAutoplayRef.current) maybeAutoplay();
+                } catch (e) {
+                    console.error('[snippets] loadVideoById error:', e);
+                }
+                return;
+            }
+
             const makeOnReady = () => {
                 return () => {
                     setPlayerReady(true);
@@ -431,6 +502,15 @@ function AudioSnippetPlayer({ videoId, onComplete, onError, autoPlay = true, isM
                             hasStartedPlaybackRef.current = true;
                         } else if (ev.data === YT.PlayerState.PAUSED || ev.data === YT.PlayerState.ENDED) {
                             setIsPlaying(false);
+                        } else if (
+                            pendingAutoplayRef.current &&
+                            (ev.data === YT.PlayerState.CUED || ev.data === YT.PlayerState.PAUSED)
+                        ) {
+                            pendingAutoplayRef.current = false;
+                            if (autoPlay && canAutoplay() && !hasPlayedRef.current) {
+                                hasPlayedRef.current = true;
+                                playSnippets();
+                            }
                         }
                     },
                     onError: (ev) => {
@@ -487,20 +567,21 @@ function AudioSnippetPlayer({ videoId, onComplete, onError, autoPlay = true, isM
         initPlayer();
 
         return () => {
-            if (snippetTimerRef.current) clearTimeout(snippetTimerRef.current);
-            if (seekTimeoutRef.current) clearTimeout(seekTimeoutRef.current);
-            if (fadeIntervalRef.current && typeof fadeIntervalRef.current === 'function') fadeIntervalRef.current();
+            if (persistent) {
+                clearSnippetTimers();
+                return;
+            }
+            clearSnippetTimers();
             [playerARef.current, playerBRef.current].forEach(p => {
                 if (p && p.destroy) try { p.destroy(); } catch (e) {}
             });
             playerARef.current = null;
             playerBRef.current = null;
-            // Clear any leftover iframes from the containers (imperative DOM, React doesn't manage it)
             [containerARef.current, containerBRef.current].forEach(c => {
                 if (c) try { c.innerHTML = ''; } catch (e) {}
             });
         };
-    }, [videoId]);
+    }, [videoId, persistent, sessionAudioEnabled]);
 
     const playSnippets = async () => {
         const pa = playerARef.current;
@@ -773,6 +854,46 @@ function AudioSnippetPlayer({ videoId, onComplete, onError, autoPlay = true, isM
         }
     };
 
+    // Called synchronously from swipe handlers while the user-gesture is active
+    const beginTrack = (newVideoId, { fromGesture = false } = {}) => {
+        if (!newVideoId) return;
+        loadedVideoIdRef.current = newVideoId;
+        resetSnippetStateForNewTrack();
+
+        const pa = playerARef.current;
+        if (!pa || typeof pa.loadVideoById !== 'function') return;
+
+        try {
+            pa.loadVideoById(newVideoId);
+            setPlayerReady(true);
+            playersReadyRef.current = IS_MOBILE ? 1 : 2;
+
+            const canPlay = IS_MOBILE ? hasAudioEnabledRef.current : true;
+            if (!autoPlay || !canPlay) return;
+
+            if (fromGesture) {
+                try {
+                    pa.playVideo();
+                    hasPlayedRef.current = true;
+                } catch (e) {
+                    console.error('[snippets] gesture playVideo error:', e);
+                }
+                playSnippets();
+            } else {
+                pendingAutoplayRef.current = true;
+                playSnippets();
+            }
+        } catch (e) {
+            console.error('[snippets] beginTrack error:', e);
+        }
+    };
+
+    useEffect(() => {
+        if (!controllerRef) return;
+        controllerRef.current = { beginTrack };
+        return () => { controllerRef.current = null; };
+    });
+
     return (
         <div className="flex flex-col items-center gap-2 py-2">
             <div className="flex gap-2">
@@ -885,7 +1006,7 @@ function AudioSnippetPlayer({ videoId, onComplete, onError, autoPlay = true, isM
 }
 
 // Track Card Component
-function TrackCard({ track, onSwipe, style, showYouTube, onToggleYouTube, onSnippetComplete, onVideoError, isMuted, onMuteToggle, onSessionGesture }) {
+function TrackCard({ track, onSwipe, style, showYouTube, onToggleYouTube, onSnippetComplete, onVideoError, isMuted, onMuteToggle, onSessionGesture, sessionAudioEnabled, audioControllerRef }) {
     const cardRef = useRef(null);
     const [isDragging, setIsDragging] = useState(false);
     const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
@@ -1028,6 +1149,9 @@ function TrackCard({ track, onSwipe, style, showYouTube, onToggleYouTube, onSnip
                     isMuted={isMuted || showYouTube}
                     onMuteToggle={onMuteToggle}
                     onSessionGesture={onSessionGesture}
+                    persistent
+                    sessionAudioEnabled={sessionAudioEnabled}
+                    controllerRef={audioControllerRef}
                 />
                 
                 {/* Swipe Instructions */}
@@ -1656,6 +1780,12 @@ class CardErrorBoundary extends React.Component {
         return { error: error || new Error('unknown') };
     }
     
+    componentDidUpdate(prevProps) {
+        if (prevProps.resetKey !== this.props.resetKey && this.state.error) {
+            this.setState({ error: null });
+        }
+    }
+    
     componentDidCatch(error, errorInfo) {
         if (window.__hardLog) {
             window.__hardLog('BOUNDARY_CAUGHT: ' + (error?.message || error || 'unknown')
@@ -1695,7 +1825,20 @@ function App() {
     const [hasStarted, setHasStarted] = useState(false);
     const [snippetComplete, setSnippetComplete] = useState(false);
     const [isMuted, setIsMuted] = useState(IS_MOBILE);
+    const [mobileSessionAudioEnabled, setMobileSessionAudioEnabled] = useState(false);
     const seenTrackIdsRef = useRef(new Set());
+    const audioControllerRef = useRef(null);
+    
+    const handleSessionGesture = () => {
+        setMobileSessionAudioEnabled(true);
+        setIsMuted(false);
+    };
+    
+    const tryAutoplayNextTrack = (nextTrack, fromGesture = true) => {
+        if (!nextTrack?.videoId) return;
+        if (IS_MOBILE && !mobileSessionAudioEnabled) return;
+        audioControllerRef.current?.beginTrack(nextTrack.videoId, { fromGesture });
+    };
     
     // Persist playlists to localStorage
     useEffect(() => {
@@ -1736,8 +1879,8 @@ function App() {
         }
     }, [currentCardIndex, stack, hasStarted]);
     
-    const fetchSimilarTracks = async (track) => {
-        setLoading(true);
+    const fetchSimilarTracks = async (track, { quiet = false } = {}) => {
+        if (!quiet) setLoading(true);
         try {
             const response = await fetch(`/api/cosine/track/${track.id}-${track.slug}`);
             const html = await response.text();
@@ -1747,13 +1890,14 @@ function App() {
             console.error('Error fetching similar tracks:', error);
             return [];
         } finally {
-            setLoading(false);
+            if (!quiet) setLoading(false);
         }
     };
     
     const handleTrackSelect = async (track) => {
         setHasStarted(true);
-        seenTrackIdsRef.current = new Set(); // Reset seen tracks for new session
+        setMobileSessionAudioEnabled(false);
+        seenTrackIdsRef.current = new Set();
         const similarTracks = await fetchSimilarTracks(track);
         setStack(similarTracks);
         setCurrentCardIndex(0);
@@ -1764,31 +1908,41 @@ function App() {
         if (!IS_MOBILE) setIsMuted(false);
         const currentTrack = stack[currentCardIndex];
         
-        // Mark current track as seen
         if (currentTrack && currentTrack.id) {
             seenTrackIdsRef.current.add(currentTrack.id);
         }
         
         if (direction === 'right') {
-            // Like the track
             setPlaylists(prev => ({
                 ...prev,
                 currentList: [...prev.currentList, currentTrack]
             }));
             
-            // Fetch similar tracks and add to stack
-            const similarTracks = await fetchSimilarTracks(currentTrack);
+            const nextIndex = currentCardIndex + 1;
+            const nextTrack = stack[nextIndex];
             
-            setStack(prev => {
-                const remaining = prev.slice(currentCardIndex + 1);
-                // Filter out tracks that have already been seen in this session
-                const newTracks = similarTracks.filter(track => !seenTrackIdsRef.current.has(track.id));
-                return shuffleArray([...remaining, ...newTracks]);
-            });
-            setCurrentCardIndex(0);
+            if (nextTrack) {
+                tryAutoplayNextTrack(nextTrack);
+                setCurrentCardIndex(nextIndex);
+                fetchSimilarTracks(currentTrack, { quiet: true }).then(similarTracks => {
+                    setStack(prev => {
+                        const remaining = prev.slice(nextIndex);
+                        const newTracks = similarTracks.filter(t => !seenTrackIdsRef.current.has(t.id));
+                        return shuffleArray([...remaining, ...newTracks]);
+                    });
+                });
+            } else {
+                fetchSimilarTracks(currentTrack, { quiet: true }).then(similarTracks => {
+                    const newTracks = similarTracks.filter(t => !seenTrackIdsRef.current.has(t.id));
+                    setStack(prev => shuffleArray([...prev.slice(currentCardIndex + 1), ...newTracks]));
+                    setCurrentCardIndex(0);
+                });
+            }
         } else {
-            // Dislike - just move to next
-            setCurrentCardIndex(prev => prev + 1);
+            const nextIndex = currentCardIndex + 1;
+            const nextTrack = stack[nextIndex];
+            tryAutoplayNextTrack(nextTrack);
+            setCurrentCardIndex(nextIndex);
         }
         
         setShowYouTube(false);
@@ -1827,7 +1981,7 @@ function App() {
             {/* Card Stack */}
             {!loading && currentTrack && (
                 <div className="card-stack relative">
-                    <CardErrorBoundary key={currentTrack.id}>
+                    <CardErrorBoundary resetKey={currentTrack.id}>
                         <TrackCard
                             track={currentTrack}
                             onSwipe={handleSwipe}
@@ -1837,7 +1991,9 @@ function App() {
                             onVideoError={handleVideoError}
                             isMuted={isMuted}
                             onMuteToggle={() => setIsMuted(prev => !prev)}
-                            onSessionGesture={IS_MOBILE ? () => setIsMuted(false) : undefined}
+                            onSessionGesture={IS_MOBILE ? handleSessionGesture : undefined}
+                            sessionAudioEnabled={mobileSessionAudioEnabled}
+                            audioControllerRef={audioControllerRef}
                             style={{ position: 'relative', zIndex: 10 }}
                         />
                     </CardErrorBoundary>
