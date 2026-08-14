@@ -1,193 +1,3 @@
-// HARD DEBUG - Outside React, survives crashes
-(function() {
-    'use strict';
-    if (typeof window === 'undefined') return;
-    
-    const DEBUG_VISIBLE_KEY = 'cosinder_hard_debug_visible';
-    
-    // Initialize logs array
-    if (!window.__hard_logs__) {
-        window.__hard_logs__ = [];
-        // Load from localStorage
-        try {
-            const saved = localStorage.getItem('__hard_logs__');
-            if (saved) {
-                window.__hard_logs__ = JSON.parse(saved);
-            }
-        } catch (e) {}
-    }
-    
-    function getVisible() {
-        try {
-            return localStorage.getItem(DEBUG_VISIBLE_KEY) !== '0';
-        } catch (e) { return true; }
-    }
-    
-    function setVisibleStored(visible) {
-        try {
-            localStorage.setItem(DEBUG_VISIBLE_KEY, visible ? '1' : '0');
-        } catch (e) {}
-    }
-    
-    function ensureWrapperAndOverlay() {
-        let wrapper = document.getElementById('__hard_debug_wrapper__');
-        if (wrapper) return { wrapper: wrapper, overlay: document.getElementById('__hard_debug_overlay__') };
-        wrapper = document.createElement('div');
-        wrapper.id = '__hard_debug_wrapper__';
-        wrapper.style.cssText = 'position:fixed;top:10px;left:10px;z-index:2147483647;display:flex;flex-direction:column;align-items:flex-start;gap:4px;';
-        const overlay = document.createElement('pre');
-        overlay.id = '__hard_debug_overlay__';
-        overlay.style.cssText = 'max-width:500px;max-height:300px;overflow:auto;background:rgba(0,0,0,0.95);color:#0f0;padding:10px;border:2px solid #0f0;border-radius:4px;font-size:10px;font-family:monospace;word-break:break-word;white-space:pre-wrap;margin:0;';
-        const hideBtn = document.createElement('button');
-        hideBtn.type = 'button';
-        hideBtn.textContent = 'Hide debug';
-        hideBtn.style.cssText = 'font-size:10px;padding:4px 8px;cursor:pointer;background:#333;color:#0f0;border:1px solid #0f0;border-radius:4px;';
-        hideBtn.addEventListener('click', function() {
-            setVisibleStored(false);
-            window.__hardDebugSetVisible(false);
-        });
-        wrapper.appendChild(overlay);
-        wrapper.appendChild(hideBtn);
-        document.documentElement.appendChild(wrapper);
-        return { wrapper: wrapper, overlay: overlay };
-    }
-    
-    function ensureShowDebugFloater() {
-        let floater = document.getElementById('__hard_debug_show_btn__');
-        if (floater) return floater;
-        floater = document.createElement('button');
-        floater.id = '__hard_debug_show_btn__';
-        floater.type = 'button';
-        floater.textContent = 'Show debug';
-        floater.style.cssText = 'position:fixed;bottom:10px;left:10px;z-index:2147483647;font-size:10px;padding:6px 10px;cursor:pointer;background:rgba(0,0,0,0.8);color:#0f0;border:1px solid #0f0;border-radius:4px;';
-        floater.addEventListener('click', function() {
-            setVisibleStored(true);
-            window.__hardDebugSetVisible(true);
-        });
-        document.documentElement.appendChild(floater);
-        return floater;
-    }
-    
-    window.__hardDebugSetVisible = function(visible) {
-        var w = document.getElementById('__hard_debug_wrapper__');
-        var s = document.getElementById('__hard_debug_show_btn__');
-        if (visible) {
-            if (w) w.style.display = '';
-            if (s) s.style.display = 'none';
-        } else {
-            if (w) w.style.display = 'none';
-            ensureShowDebugFloater().style.display = '';
-        }
-    };
-    
-    // Hard log function - defensive: must NEVER throw or go silent.
-    // If any step fails, remaining steps still run so a single failure
-    // (e.g. corrupted logs array, detached overlay) cannot blind us.
-    window.__hardLog = function(msg) {
-        try {
-            const timestamp = new Date().toISOString();
-            const entry = `[${timestamp}] ${msg}`;
-            try {
-                if (!Array.isArray(window.__hard_logs__)) window.__hard_logs__ = [];
-                window.__hard_logs__.push(entry);
-                if (window.__hard_logs__.length > 200) {
-                    window.__hard_logs__.shift();
-                }
-            } catch (e) {}
-            // Persist to localStorage
-            try {
-                localStorage.setItem('__hard_logs__', JSON.stringify(window.__hard_logs__));
-            } catch (e) {}
-            // Update overlay content only (do not change visibility)
-            try {
-                updateHardDebugOverlay();
-            } catch (e) {}
-        } catch (e) {}
-    };
-    
-    // Update overlay function - only updates pre content
-    function updateHardDebugOverlay() {
-        var overlay = document.getElementById('__hard_debug_overlay__');
-        if (!overlay || !overlay.isConnected) {
-            if (overlay && !overlay.isConnected) {
-                // Overlay got detached somehow - remove stale wrapper so it rebuilds
-                var staleWrapper = document.getElementById('__hard_debug_wrapper__');
-                if (staleWrapper) staleWrapper.remove();
-            }
-            var o = ensureWrapperAndOverlay();
-            overlay = o.overlay;
-        }
-        const last25 = window.__hard_logs__.slice(-25);
-        overlay.textContent = 'HARD DEBUG (last 25):\n' + last25.join('\n');
-    }
-    
-    // Error handler - capture stack when available (e.message alone is
-    // useless for cross-origin "Script error." entries)
-    window.addEventListener('error', function(e) {
-        var stack = '';
-        try {
-            stack = e.error && e.error.stack ? ' stack=' + String(e.error.stack).substring(0, 300) : '';
-        } catch (err) {}
-        window.__hardLog('ERROR: ' + e.message + ' filename=' + (e.filename || 'unknown') + ' lineno=' + (e.lineno || '?') + ' colno=' + (e.colno || '?') + stack);
-        // Diagnostic: Log if this is a Script error
-        if (e.message === 'Script error.' || (e.message && e.message.includes('Script error'))) {
-            window.__hardLog('SCRIPT_ERROR_DETECTED: This is a cross-origin Script error');
-        }
-    });
-    
-    // Unhandled rejection handler
-    window.addEventListener('unhandledrejection', function(e) {
-        var reason = 'unknown';
-        var stack = '';
-        try {
-            reason = (e.reason && e.reason.message) || String(e.reason) || 'unknown';
-            stack = e.reason && e.reason.stack ? ' stack=' + String(e.reason.stack).substring(0, 300) : '';
-        } catch (err) {}
-        window.__hardLog('REJECT: ' + reason + stack);
-    });
-    
-    // Pagehide handler (detect navigation/reload)
-    window.addEventListener('pagehide', function(e) {
-        window.__hardLog('PAGEHIDE: persisted=' + e.persisted);
-    });
-    
-    // Visibility change handler
-    document.addEventListener('visibilitychange', function() {
-        window.__hardLog('VISIBILITY: ' + document.visibilityState);
-    });
-    
-    // Beforeunload handler
-    window.addEventListener('beforeunload', function() {
-        window.__hardLog('BEFOREUNLOAD');
-    });
-    
-    // Pageshow handler
-    window.addEventListener('pageshow', function(e) {
-        window.__hardLog('PAGESHOW persisted=' + e.persisted);
-    });
-    
-    // Initial log
-    window.__hardLog('HARD_DEBUG_INIT');
-    
-    function initHardDebugVisibility() {
-        updateHardDebugOverlay();
-        if (!getVisible()) {
-            ensureWrapperAndOverlay();
-            ensureShowDebugFloater();
-            window.__hardDebugSetVisible(false);
-        } else {
-            var s = document.getElementById('__hard_debug_show_btn__');
-            if (s) s.style.display = 'none';
-        }
-    }
-    
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', initHardDebugVisibility);
-    } else {
-        initHardDebugVisibility();
-    }
-})();
-
 const { useState, useEffect, useRef } = React;
 
 // Utility: Parse cosine.club HTML responses
@@ -551,7 +361,6 @@ function AudioSnippetPlayer({
                         // (e.g. error 150 firing mid-play on iOS) - never
                         // auto-skip a card the user is actively listening to.
                         if (hasStartedPlaybackRef.current) {
-                            if (window.__hardLog) window.__hardLog("YT_ERROR_IGNORED: code=" + code + " (playback already started)");
                             return;
                         }
                         // 2: invalid ID, 5: HTML5 player error, 100: not found,
@@ -579,7 +388,6 @@ function AudioSnippetPlayer({
             try {
                 const targetA = makeTarget(containerARef.current);
                 if (!targetA) {
-                    if (window.__hardLog) window.__hardLog('PLAYER_INIT_ERROR: containerA missing');
                     onComplete();
                     return;
                 }
@@ -1834,11 +1642,7 @@ class CardErrorBoundary extends React.Component {
     }
     
     componentDidCatch(error, errorInfo) {
-        if (window.__hardLog) {
-            window.__hardLog('BOUNDARY_CAUGHT: ' + (error?.message || error || 'unknown')
-                + ' stack=' + String(error?.stack || 'none').substring(0, 300));
-            window.__hardLog('BOUNDARY_COMPONENT_STACK: ' + String(errorInfo?.componentStack || 'none').substring(0, 300));
-        }
+        console.error('CardErrorBoundary:', error, errorInfo?.componentStack);
     }
     
     render() {
@@ -2044,7 +1848,6 @@ function App() {
     };
     
     const handleVideoError = (errorCode) => {
-        if (window.__hardLog) window.__hardLog("VIDEO_ERROR: errorCode=" + errorCode + " trackId=" + (stack[currentCardIndex]?.id || 'null') + ", auto-skipping");
         // Auto-skip to next track (swipe left) after a small delay to show the error state
         setTimeout(() => handleSwipe('left'), 500);
     };
