@@ -392,6 +392,8 @@ function AudioSnippetPlayer({
     const seekTimeoutRef = useRef(null);
     const loadedVideoIdRef = useRef(null);
     const pendingAutoplayRef = useRef(false);
+    // Bumped on every track change so in-flight playSnippets / advances abort
+    const playGenerationRef = useRef(0);
 
     isMutedRef.current = isMuted ?? false;
     hasAudioEnabledRef.current = hasAudioEnabled;
@@ -404,9 +406,36 @@ function AudioSnippetPlayer({
         if (fadeIntervalRef.current && typeof fadeIntervalRef.current === 'function') fadeIntervalRef.current();
         snippetTimerRef.current = null;
         seekTimeoutRef.current = null;
+        fadeIntervalRef.current = null;
+    };
+
+    const stopAllPlayers = () => {
+        [playerARef.current, playerBRef.current].forEach(p => {
+            if (!p) return;
+            try { p.pauseVideo?.(); } catch (e) {}
+            try { p.stopVideo?.(); } catch (e) {}
+        });
+        activePlayerRef.current = 'A';
+    };
+
+    // Keep both A/B on the same videoId so desktop crossfades never play a previous track
+    const loadVideoOnPlayers = (id) => {
+        stopAllPlayers();
+        const pa = playerARef.current;
+        if (pa && typeof pa.loadVideoById === 'function') {
+            pa.loadVideoById(id);
+        }
+        const pb = playerBRef.current;
+        if (pb && typeof pb.loadVideoById === 'function') {
+            pb.loadVideoById(id);
+            // B is only used for crossfades — keep it cued/paused until advance()
+            try { pb.pauseVideo?.(); } catch (e) {}
+        }
+        activePlayerRef.current = 'A';
     };
 
     const resetSnippetStateForNewTrack = () => {
+        playGenerationRef.current += 1;
         hasPlayedRef.current = false;
         hasStartedPlaybackRef.current = false;
         setCurrentSnippet(0);
@@ -414,6 +443,8 @@ function AudioSnippetPlayer({
         setHoldingDot(null);
         isInitialPlaybackSetupRef.current = false;
         clearSnippetTimers();
+        advanceRef.current = null;
+        jumpToSnippetRef.current = null;
     };
 
     // Keep mobile session unlock in sync when using a persistent player
@@ -462,10 +493,11 @@ function AudioSnippetPlayer({
                 }
             };
 
-            // Reuse existing iframe — loadVideoById keeps the blessed media element alive on iOS
+            // Reuse existing iframes — load BOTH A and B so desktop crossfades
+            // never fall back to a previous track still cued on player B
             if (persistent && playerARef.current && typeof playerARef.current.loadVideoById === 'function') {
                 try {
-                    playerARef.current.loadVideoById(videoId);
+                    loadVideoOnPlayers(videoId);
                     setPlayerReady(true);
                     playersReadyRef.current = IS_MOBILE ? 1 : 2;
                     pendingAutoplayRef.current = autoPlay && canAutoplay();
@@ -584,12 +616,17 @@ function AudioSnippetPlayer({
     }, [videoId, persistent, sessionAudioEnabled]);
 
     const playSnippets = async () => {
+        const generation = playGenerationRef.current;
         const pa = playerARef.current;
         if (!pa || !pa.getDuration) return;
         const duration = await new Promise((resolve) => {
             const start = Date.now();
             const timeoutMs = IS_MOBILE ? 15000 : 10000;
             const check = () => {
+                if (playGenerationRef.current !== generation) {
+                    resolve(0);
+                    return;
+                }
                 const d = pa.getDuration();
                 if (d && d > 0) resolve(d);
                 else if (Date.now() - start > timeoutMs) resolve(0);
@@ -597,6 +634,7 @@ function AudioSnippetPlayer({
             };
             check();
         });
+        if (playGenerationRef.current !== generation) return;
         if (!duration || duration < 30) {
             onComplete();
             return;
@@ -615,6 +653,7 @@ function AudioSnippetPlayer({
             // possible), then seekTo + setVolume after a short delay.
             const currentPa = playerARef.current;
             if (!currentPa || currentPa !== pa) return; // player replaced during async wait
+            if (playGenerationRef.current !== generation) return;
             if (!hasPlayedRef.current) {
                 try {
                     currentPa.playVideo();
@@ -627,6 +666,7 @@ function AudioSnippetPlayer({
             if (seekTimeoutRef.current) clearTimeout(seekTimeoutRef.current);
             seekTimeoutRef.current = setTimeout(() => {
                 seekTimeoutRef.current = null;
+                if (playGenerationRef.current !== generation) return;
                 const p = playerARef.current;
                 if (!p) {
                     isInitialPlaybackSetupRef.current = false;
@@ -646,6 +686,7 @@ function AudioSnippetPlayer({
                 isInitialPlaybackSetupRef.current = false;
             }, 150);
         } else {
+            if (playGenerationRef.current !== generation) return;
             // Desktop: seek and set volume up front, then play
             try {
                 pa.seekTo(positions[0], true);
@@ -663,12 +704,14 @@ function AudioSnippetPlayer({
                 console.error('[snippets] playVideo error:', e);
             }
         }
+        if (playGenerationRef.current !== generation) return;
         setCurrentSnippet(0);
 
         const SNIPPET_FADE_MS = 500;
         const LOOP_FADE_MS = 1000;
 
         const advance = (index) => {
+            if (playGenerationRef.current !== generation) return;
             if (snippetTimerRef.current) {
                 clearTimeout(snippetTimerRef.current);
                 snippetTimerRef.current = null;
@@ -695,6 +738,7 @@ function AudioSnippetPlayer({
                 const pNext = getPlayer(next);
                 if (fadeIntervalRef.current) fadeIntervalRef.current();
                 fadeIntervalRef.current = fadeVolume(pCurr, isMutedRef.current ? 0 : 100, 0, fadeMs, () => {
+                    if (playGenerationRef.current !== generation) return;
                     try { pCurr.pauseVideo(); } catch (e) {}
                     const useNext = pNext && pNext.seekTo;
                     const targetPlayer = useNext ? pNext : pCurr;
@@ -723,7 +767,9 @@ function AudioSnippetPlayer({
         advanceRef.current = advance;
 
         const scheduleAdvance = (idx) => {
+            if (playGenerationRef.current !== generation) return;
             snippetTimerRef.current = setTimeout(() => {
+                if (playGenerationRef.current !== generation) return;
                 if (holdingDotRef.current === idx) {
                     // Don't seek or reschedule - let playback continue indefinitely while held
                 } else {
@@ -733,6 +779,7 @@ function AudioSnippetPlayer({
         };
 
         const jumpToSnippet = (idx) => {
+            if (playGenerationRef.current !== generation) return;
             const positions = positionsRef.current;
             if (!positions || positions.length < 3) return;
             if (snippetTimerRef.current) {
@@ -864,7 +911,7 @@ function AudioSnippetPlayer({
         if (!pa || typeof pa.loadVideoById !== 'function') return;
 
         try {
-            pa.loadVideoById(newVideoId);
+            loadVideoOnPlayers(newVideoId);
             setPlayerReady(true);
             playersReadyRef.current = IS_MOBILE ? 1 : 2;
 
@@ -1826,8 +1873,13 @@ function App() {
     const [snippetComplete, setSnippetComplete] = useState(false);
     const [isMuted, setIsMuted] = useState(IS_MOBILE);
     const [mobileSessionAudioEnabled, setMobileSessionAudioEnabled] = useState(false);
+    const [showSessionNamePrompt, setShowSessionNamePrompt] = useState(false);
+    const [showSaveSessionModal, setShowSaveSessionModal] = useState(false);
+    const [sessionSaveName, setSessionSaveName] = useState('');
     const seenTrackIdsRef = useRef(new Set());
     const audioControllerRef = useRef(null);
+    const sessionNamePromptShownRef = useRef(false);
+    const deckBusyRef = useRef(false);
     
     const handleSessionGesture = () => {
         setMobileSessionAudioEnabled(true);
@@ -1845,7 +1897,43 @@ function App() {
         localStorage.setItem(PLAYLISTS_KEY, JSON.stringify(playlists));
     }, [playlists]);
     
-    // Keyboard shortcuts
+    // Soft prompt when the session first reaches 10 likes
+    useEffect(() => {
+        if (currentList.length === 10 && !sessionNamePromptShownRef.current) {
+            sessionNamePromptShownRef.current = true;
+            setShowSessionNamePrompt(true);
+        }
+    }, [currentList.length]);
+    
+    // Auto-dismiss the soft prompt after 5 seconds
+    useEffect(() => {
+        if (!showSessionNamePrompt) return;
+        const t = setTimeout(() => setShowSessionNamePrompt(false), 5000);
+        return () => clearTimeout(t);
+    }, [showSessionNamePrompt]);
+    
+    const handleSaveSessionAsPlaylist = () => {
+        const name = sessionSaveName.trim();
+        if (!name || currentList.length === 0) return;
+        const newPlaylist = {
+            id: Date.now().toString(),
+            name,
+            tracks: [...currentList],
+            createdAt: new Date().toISOString()
+        };
+        setPlaylists(prev => ({
+            ...prev,
+            savedPlaylists: [...prev.savedPlaylists, newPlaylist]
+        }));
+        setSessionSaveName('');
+        setShowSaveSessionModal(false);
+    };
+    
+    const openSessionNameModal = () => {
+        setShowSessionNamePrompt(false);
+        setSessionSaveName('');
+        setShowSaveSessionModal(true);
+    };
     useEffect(() => {
         const handleKeyDown = (e) => {
             // Ignore when user is typing in an input or textarea
@@ -1897,6 +1985,10 @@ function App() {
     const handleTrackSelect = async (track) => {
         setHasStarted(true);
         setMobileSessionAudioEnabled(false);
+        sessionNamePromptShownRef.current = false;
+        setShowSessionNamePrompt(false);
+        setShowSaveSessionModal(false);
+        setSessionSaveName('');
         seenTrackIdsRef.current = new Set();
         const similarTracks = await fetchSimilarTracks(track);
         setStack(similarTracks);
@@ -1905,10 +1997,12 @@ function App() {
     };
     
     const handleSwipe = async (direction) => {
+        if (deckBusyRef.current) return;
         if (!IS_MOBILE) setIsMuted(false);
         const currentTrack = stack[currentCardIndex];
+        if (!currentTrack) return;
         
-        if (currentTrack && currentTrack.id) {
+        if (currentTrack.id) {
             seenTrackIdsRef.current.add(currentTrack.id);
         }
         
@@ -1918,25 +2012,25 @@ function App() {
                 currentList: [...prev.currentList, currentTrack]
             }));
             
-            const nextIndex = currentCardIndex + 1;
-            const nextTrack = stack[nextIndex];
-            
-            if (nextTrack) {
-                tryAutoplayNextTrack(nextTrack);
-                setCurrentCardIndex(nextIndex);
-                fetchSimilarTracks(currentTrack, { quiet: true }).then(similarTracks => {
-                    setStack(prev => {
-                        const remaining = prev.slice(nextIndex);
-                        const newTracks = similarTracks.filter(t => !seenTrackIdsRef.current.has(t.id));
-                        return shuffleArray([...remaining, ...newTracks]);
-                    });
-                });
-            } else {
-                fetchSimilarTracks(currentTrack, { quiet: true }).then(similarTracks => {
+            // Await fetch without full-screen loading so the persistent player stays mounted.
+            // Block further swipes until merge+shuffle finishes to avoid stack races.
+            deckBusyRef.current = true;
+            const likedIndex = currentCardIndex;
+            try {
+                const similarTracks = await fetchSimilarTracks(currentTrack, { quiet: true });
+                let nextTrack = null;
+                setStack(prev => {
+                    const remaining = prev.slice(likedIndex + 1);
                     const newTracks = similarTracks.filter(t => !seenTrackIdsRef.current.has(t.id));
-                    setStack(prev => shuffleArray([...prev.slice(currentCardIndex + 1), ...newTracks]));
-                    setCurrentCardIndex(0);
+                    const shuffled = shuffleArray([...remaining, ...newTracks]);
+                    nextTrack = shuffled[0] || null;
+                    return shuffled;
                 });
+                setCurrentCardIndex(0);
+                // Session already unlocked: persistent player can start without a fresh gesture
+                if (nextTrack) tryAutoplayNextTrack(nextTrack, false);
+            } finally {
+                deckBusyRef.current = false;
             }
         } else {
             const nextIndex = currentCardIndex + 1;
@@ -1997,6 +2091,51 @@ function App() {
                             style={{ position: 'relative', zIndex: 10 }}
                         />
                     </CardErrorBoundary>
+                </div>
+            )}
+            
+            {showSessionNamePrompt && (
+                <button
+                    type="button"
+                    onClick={openSessionNameModal}
+                    className="mt-4 px-4 py-2 text-sm text-[#6b6570] bg-[#f5e6ed]/90 border border-[#d4c8d0] rounded-full shadow-sm hover:bg-[#e8d4db] hover:text-[#3d3a42] transition-colors"
+                    style={{ animation: 'sessionPromptFadeIn 0.3s ease-out' }}
+                >
+                    name this session?
+                </button>
+            )}
+            
+            {showSaveSessionModal && (
+                <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50" onClick={() => { setShowSaveSessionModal(false); setSessionSaveName(''); }}>
+                    <div className="bg-[#fdf8f8] text-[#3d3a42] rounded-2xl p-6 max-w-sm w-full mx-4 shadow-lg border border-[#d4c8d0]" onClick={(e) => e.stopPropagation()}>
+                        <h3 className="text-xl font-bold font-display mb-4">name this session</h3>
+                        <input
+                            type="text"
+                            value={sessionSaveName}
+                            onChange={(e) => setSessionSaveName(e.target.value)}
+                            placeholder="playlist name"
+                            autoFocus
+                            className="w-full px-4 py-2 mb-4 bg-white border border-[#d4c8d0] rounded-lg text-[#3d3a42] focus:outline-none focus:ring-2 focus:ring-[#e8d4db]"
+                            onKeyDown={(e) => e.key === 'Enter' && handleSaveSessionAsPlaylist()}
+                        />
+                        <div className="flex gap-2">
+                            <button
+                                type="button"
+                                onClick={() => { setShowSaveSessionModal(false); setSessionSaveName(''); }}
+                                className="flex-1 py-2 bg-[#f5e6ed] hover:bg-[#e8d4db] text-[#3d3a42] rounded-lg font-medium transition-colors border border-[#d4c8d0]"
+                            >
+                                cancel
+                            </button>
+                            <button
+                                type="button"
+                                onClick={handleSaveSessionAsPlaylist}
+                                disabled={!sessionSaveName.trim() || currentList.length === 0}
+                                className="flex-1 py-2 bg-[#e8d4db] hover:bg-[#e0d6de] text-[#3d3a42] rounded-lg font-medium transition-colors border border-[#d4c8d0] disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                                save
+                            </button>
+                        </div>
+                    </div>
                 </div>
             )}
             
