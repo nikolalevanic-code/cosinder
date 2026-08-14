@@ -39,30 +39,70 @@ Only proceed when `.env` is absent from `git status` output.
 
 ## Deployment Options
 
-### Option 1: Simple Static Host (Recommended for MVP)
+### Option 1: Private Vercel (recommended)
 
-Since the app needs a backend proxy, you'll need a Node.js hosting service:
+The cosine proxy and YouTube OAuth run as `/api` serverless functions. `index.html` and `app.js` are served as static files. Local `npm start` is unchanged.
 
-**Recommended platforms:**
-1. **Railway** - Easiest, auto-detects Node.js
-   - Connect GitHub repo
-   - Auto-deploys on push
-   - Free tier available
+#### 1. Keep the GitHub repo private
 
-2. **Render** - Similar to Railway
-   - Free tier with auto-sleep
-   - Good for prototypes
+Vercel can deploy from a private repo. Do not commit `.env`.
 
-3. **Fly.io** - More control
-   - Global edge network
-   - Free tier available
+#### 2. Import the project
 
-### Option 2: Vercel/Netlify + Serverless Functions
+1. [vercel.com](https://vercel.com) → **Add New Project** → import `cosinder`
+2. Framework Preset: **Other**
+3. Build Command: leave empty
+4. Output Directory: leave empty
+5. Root Directory: `.`
+6. Deploy (the first deploy can 404 on `/api` until env vars are set; the UI should still load)
 
-Convert the proxy to serverless functions:
-- Create `/api/cosine.js` as a serverless function
-- Deploy frontend to Vercel/Netlify
-- API routes handled automatically
+#### 3. Environment variables
+
+Vercel → Project → **Settings → Environment Variables** (Production + Preview):
+
+| Variable | Required | Value |
+|----------|----------|--------|
+| `YOUTUBE_CLIENT_ID` | For export | Google OAuth client ID |
+| `YOUTUBE_CLIENT_SECRET` | For export | Google OAuth client secret |
+| `REDIRECT_URI` | For export | `https://YOUR-PROJECT.vercel.app/api/auth/youtube/callback` |
+| `SESSION_SECRET` | Recommended | Long random string (encrypts OAuth cookies) |
+
+Redeploy after saving env vars.
+
+#### 4. Google OAuth redirect
+
+In [Google Cloud Console](https://console.cloud.google.com/) → Credentials → your Web client:
+
+- Authorized redirect URI: `https://YOUR-PROJECT.vercel.app/api/auth/youtube/callback`
+- Authorized JavaScript origin: `https://YOUR-PROJECT.vercel.app`
+- Keep the localhost URI for local `npm start`
+- If the OAuth consent screen is in Testing, add your Google account as a test user
+
+#### 5. Make the deployment private
+
+Vercel URLs are unlisted but not secret. To restrict access:
+
+1. Project → **Settings → Deployment Protection**
+2. Enable **Vercel Authentication** (only your Vercel account can open the site)
+
+**YouTube export vs Vercel Authentication:** Google’s redirect to `/api/auth/youtube/callback` will not include your Vercel login cookie, so **OAuth export fails while Standard Protection is on**. Pick one:
+
+- **Private browsing (recommended first):** leave Vercel Authentication on; skip YouTube export on Vercel, or test export locally
+- **Export on Vercel:** turn Standard Protection **off** for Production, keep the repo private, and rely on the unlisted URL + Google test users. Preview deployments can stay protected.
+
+The app also sends `X-Robots-Tag: noindex, nofollow` so search engines should not index it.
+
+#### 6. Smoke test
+
+```bash
+curl "https://YOUR-PROJECT.vercel.app/api/cosine/fragments/search-input?q=breaka&mode=homepage"
+```
+
+You should get cosine HTML, not 404. Then: search → swipe → vinyl stack. Export only if protection is off (see above).
+
+### Option 2: Railway / Render / Fly.io
+
+These run `node server.js` as a long-lived process. Set the same env vars. Use `PORT` if the host provides one (`server.js` already reads `process.env.PORT`).
 
 ### Option 3: Docker Container
 

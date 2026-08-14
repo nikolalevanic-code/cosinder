@@ -10,6 +10,9 @@ effnet-env/
 # Cursor local state
 .cursor/
 
+# Vercel
+.vercel/
+
 # Mac OS
 .DS_Store
 

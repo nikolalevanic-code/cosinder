@@ -33,9 +33,9 @@ Then open `http://localhost:8080` in your browser. The Node server proxies cosin
 
 ### 3. Deploy
 
-This app requires a **Node.js server** (for the cosine.club proxy and YouTube OAuth). Static-only hosts (Netlify, Vercel drag-and-drop, GitHub Pages) will not work as-is.
+This app needs a backend for the cosine.club proxy and YouTube OAuth. On **Vercel**, `/api` serverless functions handle that (see `DEPLOYMENT.md`). Static-only hosts (GitHub Pages) will not work.
 
-Use Node.js hosting such as **Railway**, **Render**, or **Fly.io**. For OAuth, set `YOUTUBE_CLIENT_ID` and `YOUTUBE_CLIENT_SECRET` as environment variables. Before building, see `DEPLOYMENT.md` for the pre-build checklist (including verifying `.env` is not staged).
+For OAuth, set `YOUTUBE_CLIENT_ID` and `YOUTUBE_CLIENT_SECRET` as environment variables. Before building, see `DEPLOYMENT.md` for the pre-build checklist (including verifying `.env` is not staged).
 
 ## Technical Details
 
@@ -58,7 +58,9 @@ Use Node.js hosting such as **Railway**, **Render**, or **Fly.io**. For OAuth, s
 dj-music-discovery/
 ├── index.html    # Main HTML with CDN links
 ├── app.js        # React app with all game logic
-├── server.js     # Node proxy for cosine.club + YouTube OAuth
+├── server.js     # Local Node server
+├── lib/          # Shared proxy + OAuth handler
+├── api/          # Vercel serverless entry
 ├── package.json  # Dependencies (googleapis, dotenv)
 ├── .env.example  # Template for OAuth credentials
 └── README.md     # This file
