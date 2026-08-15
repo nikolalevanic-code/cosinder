@@ -1107,6 +1107,22 @@ const addVideoToPlaylist = async (playlistId, videoId) => {
     return true;
 };
 
+const YT_EXPORT_PENDING_KEY = 'cosinder_youtube_export_pending';
+
+const readPendingYouTubeExport = () => {
+    try {
+        return JSON.parse(sessionStorage.getItem(YT_EXPORT_PENDING_KEY) || 'null');
+    } catch (e) {
+        return null;
+    }
+};
+
+const clearPendingYouTubeExport = () => {
+    try {
+        sessionStorage.removeItem(YT_EXPORT_PENDING_KEY);
+    } catch (e) {}
+};
+
 // Export to YouTube Modal Component
 function ExportToYouTubeModal({ isOpen, onClose, likedTracks }) {
     const [playlistName, setPlaylistName] = useState('');
@@ -1115,6 +1131,8 @@ function ExportToYouTubeModal({ isOpen, onClose, likedTracks }) {
     const [exportSuccess, setExportSuccess] = useState(null);
     const [isAuthenticated, setIsAuthenticated] = useState(false);
     const [progress, setProgress] = useState({ current: 0, total: 0 });
+    const [pendingAutoExport, setPendingAutoExport] = useState(false);
+    const autoExportStartedRef = useRef(false);
     
     // Set default playlist name on open
     useEffect(() => {
@@ -1126,41 +1144,44 @@ function ExportToYouTubeModal({ isOpen, onClose, likedTracks }) {
     
     // Check for OAuth callback and existing session
     useEffect(() => {
-        // Check for OAuth callback
         const params = new URLSearchParams(window.location.search);
         const authStatus = params.get('youtube_auth');
         const sessionId = params.get('session');
+        const pending = readPendingYouTubeExport();
         
         if (authStatus === 'success' && sessionId) {
             localStorage.setItem('youtube_session_id', sessionId);
             setIsAuthenticated(true);
             setExportError(null);
-            // Clean URL
+            if (pending?.playlistName) {
+                setPlaylistName(pending.playlistName);
+            }
+            if (pending?.autoExport) {
+                setPendingAutoExport(true);
+            }
             window.history.replaceState({}, '', window.location.pathname);
         } else if (authStatus === 'error') {
             setExportError('authentication failed. please try again.');
+            if (pending?.playlistName) {
+                setPlaylistName(pending.playlistName);
+            }
+            clearPendingYouTubeExport();
             window.history.replaceState({}, '', window.location.pathname);
-        }
-        
-        // Check for existing session
-        const existingSession = localStorage.getItem('youtube_session_id');
-        if (existingSession) {
-            setIsAuthenticated(true);
+        } else {
+            const existingSession = localStorage.getItem('youtube_session_id');
+            if (existingSession) {
+                setIsAuthenticated(true);
+            }
         }
     }, []);
     
-    const handleGoogleSignIn = () => {
-        // Redirect to backend OAuth endpoint
-        window.location.href = '/api/auth/youtube/init';
-    };
-    
-    const handleExport = async () => {
-        if (!playlistName.trim()) {
+    const runExport = async (name) => {
+        if (!name) {
             setExportError('please enter a playlist name');
             return;
         }
         
-        if (!isAuthenticated) {
+        if (!localStorage.getItem('youtube_session_id')) {
             setExportError('please sign in with google first');
             return;
         }
@@ -1175,11 +1196,9 @@ function ExportToYouTubeModal({ isOpen, onClose, likedTracks }) {
         setExportSuccess(null);
         
         try {
-            // Create playlist
             setProgress({ current: 0, total: likedTracks.length });
-            const playlistId = await createYouTubePlaylist(playlistName.trim());
+            const playlistId = await createYouTubePlaylist(name);
             
-            // Add videos to playlist
             let successCount = 0;
             for (let i = 0; i < likedTracks.length; i++) {
                 const track = likedTracks[i];
@@ -1210,6 +1229,34 @@ function ExportToYouTubeModal({ isOpen, onClose, likedTracks }) {
         } finally {
             setIsExporting(false);
         }
+    };
+    
+    // After Google redirects back, reopen triggers isOpen and we resume export
+    useEffect(() => {
+        if (!isOpen || !pendingAutoExport || !isAuthenticated) return;
+        if (autoExportStartedRef.current) return;
+        const name = playlistName.trim();
+        if (!name) return;
+        
+        autoExportStartedRef.current = true;
+        setPendingAutoExport(false);
+        clearPendingYouTubeExport();
+        runExport(name);
+    }, [isOpen, pendingAutoExport, isAuthenticated, playlistName, likedTracks]);
+    
+    const handleGoogleSignIn = () => {
+        const name = playlistName.trim() || `cosinder. - ${new Date().toLocaleDateString()}`;
+        try {
+            sessionStorage.setItem(YT_EXPORT_PENDING_KEY, JSON.stringify({
+                playlistName: name,
+                autoExport: true
+            }));
+        } catch (e) {}
+        window.location.href = '/api/auth/youtube/init';
+    };
+    
+    const handleExport = () => {
+        runExport(playlistName.trim());
     };
     
     const handleClose = () => {
@@ -1364,6 +1411,17 @@ function VinylStack({ currentList, savedPlaylists, onUpdatePlaylists }) {
     const [showSaveModal, setShowSaveModal] = useState(false);
     const [saveName, setSaveName] = useState('');
     const [activeView, setActiveView] = useState('current'); // 'current' or saved playlist id
+    
+    // Reopen export UI after Google OAuth redirect
+    useEffect(() => {
+        const params = new URLSearchParams(window.location.search);
+        const authStatus = params.get('youtube_auth');
+        const pending = readPendingYouTubeExport();
+        if (authStatus === 'success' || authStatus === 'error' || pending?.autoExport) {
+            setIsOpen(true);
+            setShowExportModal(true);
+        }
+    }, []);
     
     const activePlaylist = activeView === 'current' ? null : savedPlaylists.find(p => p.id === activeView);
     const activeTracks = activeView === 'current'
