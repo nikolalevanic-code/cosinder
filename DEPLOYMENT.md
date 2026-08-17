@@ -41,7 +41,7 @@ Only proceed when `.env` is absent from `git status` output.
 
 ### Option 1: Private Vercel (recommended)
 
-The cosine proxy and YouTube OAuth run as `/api` serverless functions. `index.html` and `app.js` are served as static files. Local `npm start` is unchanged.
+The cosine.club API and YouTube OAuth run as `/api` serverless functions. `index.html` and `app.js` are served as static files. Local `npm start` is unchanged.
 
 #### 1. Keep the GitHub repo private
 
@@ -66,6 +66,7 @@ Vercel → Project → **Settings → Environment Variables** (Production + Prev
 | `YOUTUBE_CLIENT_SECRET` | For export | Google OAuth client secret |
 | `REDIRECT_URI` | For export | `https://YOUR-PROJECT.vercel.app/api/auth/youtube/callback` |
 | `SESSION_SECRET` | Recommended | Long random string (encrypts OAuth cookies) |
+| `COSINE_API_KEY` | For search / swipe | Key from https://cosine.club/account/api |
 
 Redeploy after saving env vars.
 
@@ -95,10 +96,10 @@ The app also sends `X-Robots-Tag: noindex, nofollow` so search engines should no
 #### 6. Smoke test
 
 ```bash
-curl "https://YOUR-PROJECT.vercel.app/api/cosine/fragments/search-input?q=breaka&mode=homepage"
+curl "https://YOUR-PROJECT.vercel.app/api/cosine/search?q=breaka"
 ```
 
-You should get cosine HTML, not 404. Then: search → swipe → vinyl stack. Export only if protection is off (see above).
+You should get JSON search results, not 404. Then: search → swipe → vinyl stack. Export only if protection is off (see above).
 
 ### Option 2: Railway / Render / Fly.io
 
@@ -123,6 +124,7 @@ For **YouTube playlist export** (OAuth), set these in your hosting dashboard:
 | `YOUTUBE_CLIENT_ID` | Yes (for export) | Google OAuth 2.0 Client ID |
 | `YOUTUBE_CLIENT_SECRET` | Yes (for export) | Google OAuth 2.0 Client Secret |
 | `REDIRECT_URI` | No | Defaults to `http://localhost:8080/api/auth/youtube/callback` locally. For production, set to `https://your-domain.com/api/auth/youtube/callback` |
+| `COSINE_API_KEY` | Yes (for search / swipe) | From https://cosine.club/account/api. Keep server-side only. |
 
 **Production OAuth setup:**
 1. Add your production redirect URI to [Google Cloud Console](https://console.cloud.google.com/) → Credentials → your OAuth client → Authorized redirect URIs
@@ -137,7 +139,7 @@ Without these variables, the app runs but YouTube export will be disabled.
 dj-music-discovery/
 ├── index.html          # Main HTML with React/Tailwind CDN
 ├── app.js              # React app with all game logic
-├── server.js           # Node.js proxy server
+├── server.js           # Local Node server
 ├── README.md           # Feature documentation
 ├── PROGRESS.md         # Development progress
 └── DEPLOYMENT.md       # This file
@@ -185,7 +187,7 @@ Before deploying, test these flows:
 
 ### "Failed to fetch" errors
 - Check that server.js is running
-- Verify proxy endpoint is accessible
+- Verify `/api/cosine/search` is accessible
 - Check browser console for CORS errors
 
 ### Audio snippets not playing
@@ -203,7 +205,7 @@ Before deploying, test these flows:
 For issues or questions:
 1. Check browser console for errors
 2. Review server logs: `tail -f /tmp/dj-server.log`
-3. Test proxy directly: `curl http://localhost:8080/api/cosine/fragments/search-input?q=test`
+3. Test the Cosine API route: `curl http://localhost:8080/api/cosine/search?q=test`
 
 ## License
 

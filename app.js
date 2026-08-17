@@ -1,47 +1,49 @@
 const { useState, useEffect, useRef } = React;
 
-// Utility: Parse cosine.club HTML responses
-const parseSearchResults = (html) => {
-    const parser = new DOMParser();
-    const doc = parser.parseFromString(html, 'text/html');
-    const links = doc.querySelectorAll('a[href^="/track/"]');
-    
-    return Array.from(links).map(link => {
-        const href = link.getAttribute('href');
-        const match = href.match(/\/track\/(\d+)-(.+)/);
-        if (match) {
-            return {
-                id: match[1],
-                slug: match[2],
-                name: link.textContent.trim(),
-                url: `https://cosine.club${href}`
-            };
-        }
-        return null;
-    }).filter(Boolean);
+const trackDisplayName = (track) =>
+    track.name || [track.artist, track.track].filter(Boolean).join(' - ') || 'Unknown Track';
+
+const mapSearchTrack = (track) => {
+    if (!track || track.id == null) return null;
+    return {
+        id: String(track.id),
+        name: trackDisplayName(track)
+    };
 };
 
-const parseTrackPage = (html) => {
-    const parser = new DOMParser();
-    const doc = parser.parseFromString(html, 'text/html');
-    const trackElements = doc.querySelectorAll('[data-video-id]');
-    
-    return Array.from(trackElements).map(el => {
-        const videoId = el.getAttribute('data-video-id');
-        const trackId = el.getAttribute('data-track-id');
-        const nameEl = el.querySelector('.truncate');
-        const similarityEl = el.querySelector('[title*="similar"]');
-        
-        if (!videoId || !trackId) return null;
-        
-        return {
-            id: trackId,
-            videoId: videoId,
-            name: nameEl ? nameEl.textContent.trim() : 'Unknown Track',
-            similarity: similarityEl ? similarityEl.textContent.trim() : 'N/A',
-            thumbnail: `https://img.youtube.com/vi/${videoId}/mqdefault.jpg`
-        };
-    }).filter(Boolean);
+const mapSimilarTrack = (track) => {
+    if (!track || track.id == null || !track.video_id) return null;
+    const score = typeof track.score === 'number'
+        ? `${Math.round(track.score * 100)}%`
+        : 'N/A';
+    return {
+        id: String(track.id),
+        videoId: track.video_id,
+        name: trackDisplayName(track),
+        similarity: score,
+        thumbnail: `https://img.youtube.com/vi/${track.video_id}/mqdefault.jpg`
+    };
+};
+
+const cosineJson = async (url) => {
+    const requestOnce = async () => {
+        const response = await fetch(url);
+        const retryAfter = Number(response.headers.get('Retry-After'));
+        const body = await response.json().catch(() => ({}));
+        return { response, retryAfter, body };
+    };
+
+    let { response, retryAfter, body } = await requestOnce();
+    if (response.status === 429) {
+        const waitMs = Math.min(60000, Math.max(1000, (retryAfter || 1) * 1000));
+        await new Promise((resolve) => setTimeout(resolve, waitMs));
+        ({ response, retryAfter, body } = await requestOnce());
+    }
+
+    if (!response.ok) {
+        throw new Error(body.message || body.error || `Cosine request failed (${response.status})`);
+    }
+    return body;
 };
 
 // Utility: Shuffle array
@@ -67,18 +69,18 @@ function SearchBar({ onTrackSelect, placeholder }) {
     const timeoutRef = useRef(null);
     
     const searchTracks = async (searchQuery) => {
-        if (!searchQuery.trim()) {
+        const q = searchQuery.trim();
+        if (q.length < 2) {
             setResults([]);
             return;
         }
         
         setLoading(true);
         try {
-            const response = await fetch(
-                `/api/cosine/fragments/search-input?q=${encodeURIComponent(searchQuery)}&mode=homepage`
+            const body = await cosineJson(
+                `/api/cosine/search?q=${encodeURIComponent(q)}&limit=10`
             );
-            const html = await response.text();
-            const tracks = parseSearchResults(html);
+            const tracks = (body.data || []).map(mapSearchTrack).filter(Boolean);
             setResults(tracks.slice(0, 10));
             setShowDropdown(true);
         } catch (error) {
@@ -1795,6 +1797,7 @@ function App() {
     const [vinylPulseToken, setVinylPulseToken] = useState(0);
     const [showSwipeCue, setShowSwipeCue] = useState(false);
     const seenTrackIdsRef = useRef(new Set());
+    const similarCacheRef = useRef(new Map());
     const audioControllerRef = useRef(null);
     const sessionNamePromptShownRef = useRef(false);
     const deckBusyRef = useRef(false);
@@ -1894,11 +1897,18 @@ function App() {
     }, [currentCardIndex, stack, hasStarted]);
     
     const fetchSimilarTracks = async (track, { quiet = false } = {}) => {
+        if (!track?.id) return [];
+        const cacheKey = String(track.id);
+        if (similarCacheRef.current.has(cacheKey)) {
+            return similarCacheRef.current.get(cacheKey);
+        }
         if (!quiet) setLoading(true);
         try {
-            const response = await fetch(`/api/cosine/track/${track.id}-${track.slug}`);
-            const html = await response.text();
-            const tracks = parseTrackPage(html);
+            const body = await cosineJson(
+                `/api/cosine/tracks/${encodeURIComponent(track.id)}/similar?limit=20`
+            );
+            const tracks = (body.data?.similar_tracks || []).map(mapSimilarTrack).filter(Boolean);
+            similarCacheRef.current.set(cacheKey, tracks);
             return tracks;
         } catch (error) {
             console.error('Error fetching similar tracks:', error);

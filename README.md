@@ -7,7 +7,7 @@ A Tinder-style music discovery tool for DJs, powered by [cosine.club](https://co
 ✅ **Smart Search** - Search 1.9M tracks with autocomplete  
 ✅ **Swipeable Cards** - Tinder-style interface for quick decisions  
 ✅ **Audio Previews** - 3x 5-second snippets from each track  
-✅ **Dynamic Discovery** - Swiping right fetches 100 more similar tracks  
+✅ **Dynamic Discovery** - Swiping right fetches similar tracks and shuffles them into the stack  
 ✅ **Vinyl Stack** - Beautiful sidebar showing your liked tracks  
 ✅ **YouTube Integration** - Full track playback on demand  
 ✅ **Local Persistence** - Your likes are saved in browser storage  
@@ -21,34 +21,34 @@ cd dj-music-discovery
 node server.js
 ```
 
-Then open `http://localhost:8080` in your browser. The Node server proxies cosine.club API requests.
+Then open `http://localhost:8080` in your browser. The Node server calls the official cosine.club API with `COSINE_API_KEY`.
 
 ### 2. Start Discovering
 
 1. **Search** for a track you like (e.g., "Daft Punk - One More Time")
 2. **Swipe right** (❤️) if you like it, **left** (✖️) to skip
-3. Each right swipe fetches 100 similar tracks and adds them to your stack
+3. Each right swipe fetches similar tracks and adds them to your stack
 4. Click the 💿 icon to see your liked tracks
 5. Click "Show Full Track" to hear the complete song on YouTube
 
 ### 3. Deploy
 
-This app needs a backend for the cosine.club proxy and YouTube OAuth. On **Vercel**, `/api` serverless functions handle that (see `DEPLOYMENT.md`). Static-only hosts (GitHub Pages) will not work.
+This app needs a backend for the cosine.club API and YouTube OAuth. On **Vercel**, `/api` serverless functions handle that (see `DEPLOYMENT.md`). Static-only hosts (GitHub Pages) will not work.
 
-For OAuth, set `YOUTUBE_CLIENT_ID` and `YOUTUBE_CLIENT_SECRET` as environment variables. Before building, see `DEPLOYMENT.md` for the pre-build checklist (including verifying `.env` is not staged).
+Set `COSINE_API_KEY` (from [cosine.club/account/api](https://cosine.club/account/api)) plus `YOUTUBE_CLIENT_ID` and `YOUTUBE_CLIENT_SECRET` for export. Before building, see `DEPLOYMENT.md` for the pre-build checklist (including verifying `.env` is not staged).
 
 ## Technical Details
 
 ### Stack
 - **Frontend**: React 18 (via CDN)
 - **Styling**: Tailwind CSS (via CDN)
-- **API**: cosine.club (reverse-engineered endpoints)
+- **API**: cosine.club official API (`/api/v1`)
 - **Audio**: YouTube IFrame API
 
 ### How It Works
 
-1. **Search**: Calls `cosine.club/fragments/search-input` for autocomplete
-2. **Fetch Similar**: Scrapes track pages for similar tracks with YouTube IDs
+1. **Search**: `GET /api/v1/search` via Cosinder’s server (Bearer key stays server-side)
+2. **Fetch Similar**: `GET /api/v1/tracks/{id}/similar` (includes YouTube `video_id`)
 3. **Shuffle**: Mixes new tracks into the stack to keep it interesting
 4. **Persist**: Saves liked tracks to `localStorage`
 
@@ -59,7 +59,7 @@ dj-music-discovery/
 ├── index.html    # Main HTML with CDN links
 ├── app.js        # React app with all game logic
 ├── server.js     # Local Node server
-├── lib/          # Shared proxy + OAuth handler
+├── lib/          # Shared Cosine API + OAuth handler
 ├── api/          # Vercel serverless entry
 ├── package.json  # Dependencies (googleapis, dotenv)
 ├── .env.example  # Template for OAuth credentials
@@ -111,4 +111,4 @@ When making changes, defer to this plan and ask if intent is unclear.
 
 ---
 
-**Note**: This tool uses cosine.club's public interface for educational/personal use. Please be respectful of their service and implement rate limiting if using heavily.
+**Note**: Cosinder uses cosine.club’s official API with a server-side key, `User-Agent: cosinder/1.0`, and 429 backoff. Do not put `COSINE_API_KEY` in the browser or in git.
