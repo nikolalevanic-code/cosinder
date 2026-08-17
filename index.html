@@ -65,6 +65,56 @@
             transition: none;
         }
         
+        .swipe-card.card-exit-right {
+            transition: transform 0.2s ease-out, opacity 0.2s ease-out;
+            transform: translateX(120%) rotate(14deg) !important;
+            opacity: 0 !important;
+            pointer-events: none;
+        }
+        
+        .swipe-card.card-exit-left {
+            transition: transform 0.2s ease-out, opacity 0.2s ease-out;
+            transform: translateX(-120%) rotate(-14deg) !important;
+            opacity: 0 !important;
+            pointer-events: none;
+        }
+        
+        .swipe-card.card-enter {
+            animation: cardEnter 0.18s ease-out;
+        }
+        
+        @keyframes cardEnter {
+            from { opacity: 0; transform: scale(0.97); }
+            to { opacity: 1; transform: scale(1); }
+        }
+        
+        .vinyl-pulse {
+            animation: vinylPulse 0.15s ease-out;
+        }
+        
+        @keyframes vinylPulse {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.15); }
+        }
+        
+        .swipe-cue {
+            animation: sessionPromptFadeIn 0.3s ease-out;
+        }
+        
+        @media (prefers-reduced-motion: reduce) {
+            .swipe-card.card-exit-right,
+            .swipe-card.card-exit-left {
+                transition: none !important;
+                transform: none !important;
+                opacity: 0 !important;
+            }
+            .swipe-card.card-enter,
+            .vinyl-pulse,
+            .swipe-cue {
+                animation: none !important;
+            }
+        }
+        
         .swipe-indicator {
             position: absolute;
             top: 50%;

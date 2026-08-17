@@ -54,8 +54,12 @@ const shuffleArray = (array) => {
     return shuffled;
 };
 
+const prefersReducedMotion = () =>
+    typeof window !== 'undefined' &&
+    window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
 // Search Component
-function SearchBar({ onTrackSelect }) {
+function SearchBar({ onTrackSelect, placeholder }) {
     const [query, setQuery] = useState('');
     const [results, setResults] = useState([]);
     const [loading, setLoading] = useState(false);
@@ -111,7 +115,7 @@ function SearchBar({ onTrackSelect }) {
                 value={query}
                 onChange={handleInputChange}
                 onFocus={() => results.length > 0 && setShowDropdown(true)}
-                placeholder="search for a track to start discovering"
+                placeholder={placeholder || 'search for a track to start discovering'}
                 className="w-full px-6 py-4 text-lg rounded-2xl bg-white border border-[#d4c8d0] shadow-sm focus:outline-none focus:ring-2 focus:ring-[#e8d4db] focus:border-[#e8d4db] text-[#3d3a42]"
             />
             
@@ -861,22 +865,50 @@ function AudioSnippetPlayer({
 }
 
 // Track Card Component
-function TrackCard({ track, onSwipe, style, showYouTube, onToggleYouTube, onSnippetComplete, onVideoError, isMuted, onMuteToggle, onSessionGesture, sessionAudioEnabled, audioControllerRef }) {
+function TrackCard({
+    track,
+    onSwipe,
+    style,
+    showYouTube,
+    onToggleYouTube,
+    onSnippetComplete,
+    onVideoError,
+    isMuted,
+    onMuteToggle,
+    onSessionGesture,
+    sessionAudioEnabled,
+    audioControllerRef,
+    exitDirection,
+    onExitComplete,
+    showSwipeCue,
+    swipeCueText
+}) {
     const cardRef = useRef(null);
     const [isDragging, setIsDragging] = useState(false);
     const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
     const startPosRef = useRef({ x: 0, y: 0 });
     const dragOffsetRef = useRef({ x: 0, y: 0 });
     const hasDraggedRef = useRef(false);
+    const localExitRef = useRef(false);
     dragOffsetRef.current = dragOffset;
+    
+    useEffect(() => {
+        if (!exitDirection) return;
+        localExitRef.current = true;
+        if (prefersReducedMotion()) {
+            onExitComplete?.();
+            return;
+        }
+        const t = setTimeout(() => onExitComplete?.(), 200);
+        return () => clearTimeout(t);
+    }, [exitDirection, onExitComplete]);
     
     const handlePointerDown = (e) => {
         try {
-            // Check for interactive elements - treat as non-swipe
+            if (exitDirection || localExitRef.current) return;
             const target = e.target;
             if (!target) return;
             
-            // Guard closest() - may not exist on SVG/path elements
             const closestButton = target.closest ? target.closest('button') : null;
             const closestLink = target.closest ? target.closest('a') : null;
             const closestNoSwipe = target.closest ? target.closest('[data-no-swipe="true"]') : null;
@@ -885,7 +917,6 @@ function TrackCard({ track, onSwipe, style, showYouTube, onToggleYouTube, onSnip
                 return;
             }
             
-            // Guard setPointerCapture with pointerId check
             if (e.pointerId != null && e.currentTarget && typeof e.currentTarget.setPointerCapture === 'function') {
                 try {
                     e.currentTarget.setPointerCapture(e.pointerId);
@@ -900,7 +931,6 @@ function TrackCard({ track, onSwipe, style, showYouTube, onToggleYouTube, onSnip
             setIsDragging(true);
             setDragOffset({ x: 0, y: 0 });
         } catch (err) {
-            // Prevent crashes - silently ignore errors
             console.error('[TrackCard] handlePointerDown error:', err);
         }
     };
@@ -918,8 +948,12 @@ function TrackCard({ track, onSwipe, style, showYouTube, onToggleYouTube, onSnip
             const dx = dragOffsetRef.current.x;
             const hasDragged = hasDraggedRef.current;
             setIsDragging(false);
-            setDragOffset({ x: 0, y: 0 });
-            if (hasDragged && Math.abs(dx) > 100) onSwipe(dx > 0 ? 'right' : 'left');
+            if (hasDragged && Math.abs(dx) > 100) {
+                // Keep current offset until parent applies exit class
+                onSwipe(dx > 0 ? 'right' : 'left');
+            } else {
+                setDragOffset({ x: 0, y: 0 });
+            }
         };
         window.addEventListener('pointermove', onMove);
         window.addEventListener('pointerup', onUp);
@@ -935,14 +969,24 @@ function TrackCard({ track, onSwipe, style, showYouTube, onToggleYouTube, onSnip
     const likeOpacity = Math.max(0, Math.min(1, dragOffset.x / 150));
     const dislikeOpacity = Math.max(0, Math.min(1, -dragOffset.x / 150));
     
+    const exitClass = exitDirection === 'right'
+        ? 'card-exit-right'
+        : exitDirection === 'left'
+            ? 'card-exit-left'
+            : '';
+    
     return (
         <div
             ref={cardRef}
-            className={`swipe-card ${isDragging ? 'swiping' : ''}`}
+            className={`swipe-card card-enter ${isDragging ? 'swiping' : ''} ${exitClass}`}
             style={{
                 ...style,
-                transform: `translate(${dragOffset.x}px, ${dragOffset.y}px) rotate(${rotation}deg)`,
-                opacity: opacity
+                ...(exitDirection
+                    ? {}
+                    : {
+                        transform: `translate(${dragOffset.x}px, ${dragOffset.y}px) rotate(${rotation}deg)`,
+                        opacity: opacity
+                    })
             }}
             onPointerDown={handlePointerDown}
         >
@@ -1009,10 +1053,11 @@ function TrackCard({ track, onSwipe, style, showYouTube, onToggleYouTube, onSnip
                     controllerRef={audioControllerRef}
                 />
                 
-                {/* Swipe Instructions */}
-                <div className="pt-0 px-6 pb-6 text-center text-[#6b6570]">
-                    <p className="text-sm">swipe or use arrows to skip and like</p>
-                </div>
+                {showSwipeCue && (
+                    <div className="pt-0 px-6 pb-6 text-center text-[#6b6570] swipe-cue">
+                        <p className="text-sm">{swipeCueText}</p>
+                    </div>
+                )}
             </div>
             
             {/* Swipe Indicators */}
@@ -1405,12 +1450,13 @@ function ExportToYouTubeModal({ isOpen, onClose, likedTracks }) {
 }
 
 // Vinyl Stack Sidebar
-function VinylStack({ currentList, savedPlaylists, onUpdatePlaylists }) {
+function VinylStack({ currentList, savedPlaylists, onUpdatePlaylists, pulseToken }) {
     const [isOpen, setIsOpen] = useState(false);
     const [showExportModal, setShowExportModal] = useState(false);
     const [showSaveModal, setShowSaveModal] = useState(false);
     const [saveName, setSaveName] = useState('');
     const [activeView, setActiveView] = useState('current'); // 'current' or saved playlist id
+    const [pulse, setPulse] = useState(false);
     
     // Reopen export UI after Google OAuth redirect
     useEffect(() => {
@@ -1422,6 +1468,13 @@ function VinylStack({ currentList, savedPlaylists, onUpdatePlaylists }) {
             setShowExportModal(true);
         }
     }, []);
+    
+    useEffect(() => {
+        if (!pulseToken || prefersReducedMotion()) return;
+        setPulse(true);
+        const t = setTimeout(() => setPulse(false), 150);
+        return () => clearTimeout(t);
+    }, [pulseToken]);
     
     const activePlaylist = activeView === 'current' ? null : savedPlaylists.find(p => p.id === activeView);
     const activeTracks = activeView === 'current'
@@ -1470,7 +1523,7 @@ function VinylStack({ currentList, savedPlaylists, onUpdatePlaylists }) {
             {/* Toggle Button */}
             <button
                 onClick={() => setIsOpen(!isOpen)}
-                className="fixed top-6 right-6 z-50 bg-white rounded-full p-4 shadow-sm border border-[#d4c8d0] hover:bg-[#f5e6ed] transition-colors"
+                className={`fixed top-6 right-6 z-50 bg-white rounded-full p-4 shadow-sm border border-[#d4c8d0] hover:bg-[#f5e6ed] transition-colors ${pulse ? 'vinyl-pulse' : ''}`}
             >
                 <div className="relative">
                     <svg className="w-8 h-8 text-[#3d3a42]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1738,10 +1791,14 @@ function App() {
     const [showSessionNamePrompt, setShowSessionNamePrompt] = useState(false);
     const [showSaveSessionModal, setShowSaveSessionModal] = useState(false);
     const [sessionSaveName, setSessionSaveName] = useState('');
+    const [cardExit, setCardExit] = useState(null);
+    const [vinylPulseToken, setVinylPulseToken] = useState(0);
+    const [showSwipeCue, setShowSwipeCue] = useState(false);
     const seenTrackIdsRef = useRef(new Set());
     const audioControllerRef = useRef(null);
     const sessionNamePromptShownRef = useRef(false);
     const deckBusyRef = useRef(false);
+    const swipeExitPendingRef = useRef(null);
     
     const handleSessionGesture = () => {
         setMobileSessionAudioEnabled(true);
@@ -1805,10 +1862,10 @@ function App() {
             
             if (e.key === 'ArrowLeft') {
                 e.preventDefault();
-                handleSwipe('left');
+                requestSwipe('left');
             } else if (e.key === 'ArrowRight') {
                 e.preventDefault();
-                handleSwipe('right');
+                requestSwipe('right');
             } else if (e.key === ' ') {
                 e.preventDefault();
                 setIsMuted(prev => !prev);
@@ -1818,6 +1875,13 @@ function App() {
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
     }, [hasStarted, currentCardIndex, stack]);
+    
+    // First-card cue auto-hides after 4s
+    useEffect(() => {
+        if (!showSwipeCue) return;
+        const t = setTimeout(() => setShowSwipeCue(false), 4000);
+        return () => clearTimeout(t);
+    }, [showSwipeCue]);
     
     // Mark tracks as seen when they're displayed
     useEffect(() => {
@@ -1851,6 +1915,9 @@ function App() {
         setShowSessionNamePrompt(false);
         setShowSaveSessionModal(false);
         setSessionSaveName('');
+        setShowSwipeCue(true);
+        setCardExit(null);
+        swipeExitPendingRef.current = null;
         seenTrackIdsRef.current = new Set();
         const similarTracks = await fetchSimilarTracks(track);
         setStack(similarTracks);
@@ -1860,9 +1927,13 @@ function App() {
     
     const handleSwipe = async (direction) => {
         if (deckBusyRef.current) return;
+        setShowSwipeCue(false);
         if (!IS_MOBILE) setIsMuted(false);
         const currentTrack = stack[currentCardIndex];
-        if (!currentTrack) return;
+        if (!currentTrack) {
+            setCardExit(null);
+            return;
+        }
         
         if (currentTrack.id) {
             seenTrackIdsRef.current.add(currentTrack.id);
@@ -1873,9 +1944,11 @@ function App() {
                 ...prev,
                 currentList: [...prev.currentList, currentTrack]
             }));
+            setVinylPulseToken(t => t + 1);
             
             // Await fetch without full-screen loading so the persistent player stays mounted.
             // Block further swipes until merge+shuffle finishes to avoid stack races.
+            // Keep cardExit set during the await so the old card stays off-screen (no boomerang).
             deckBusyRef.current = true;
             const likedIndex = currentCardIndex;
             try {
@@ -1893,24 +1966,46 @@ function App() {
                 if (nextTrack) tryAutoplayNextTrack(nextTrack, false);
             } finally {
                 deckBusyRef.current = false;
+                setCardExit(null);
             }
         } else {
             const nextIndex = currentCardIndex + 1;
             const nextTrack = stack[nextIndex];
             tryAutoplayNextTrack(nextTrack);
             setCurrentCardIndex(nextIndex);
+            setCardExit(null);
         }
         
         setShowYouTube(false);
         setSnippetComplete(false);
     };
     
+    const requestSwipe = (direction) => {
+        if (deckBusyRef.current || swipeExitPendingRef.current || cardExit) return;
+        if (prefersReducedMotion()) {
+            handleSwipe(direction);
+            return;
+        }
+        swipeExitPendingRef.current = direction;
+        setCardExit(direction);
+    };
+    
+    const handleCardExitComplete = () => {
+        const direction = swipeExitPendingRef.current || cardExit;
+        swipeExitPendingRef.current = null;
+        // Do not clear cardExit here — keep the card off-screen until handleSwipe advances the deck
+        if (direction) handleSwipe(direction);
+    };
+    
     const handleVideoError = (errorCode) => {
         // Auto-skip to next track (swipe left) after a small delay to show the error state
-        setTimeout(() => handleSwipe('left'), 500);
+        setTimeout(() => requestSwipe('left'), 500);
     };
     
     const currentTrack = stack[currentCardIndex];
+    const swipeCueText = IS_MOBILE && !mobileSessionAudioEnabled
+        ? 'tap play, then swipe right to keep · left to skip'
+        : 'swipe right to keep · left to skip';
     
     return (
         <div className="min-h-screen flex flex-col items-center justify-center p-8 bg-[#fdf8f8]">
@@ -1922,7 +2017,7 @@ function App() {
             
             {/* Search Bar */}
             {!hasStarted && (
-                <SearchBar onTrackSelect={handleTrackSelect} />
+                <SearchBar onTrackSelect={handleTrackSelect} placeholder="search for a track to start discovering" />
             )}
             
             {/* Loading State */}
@@ -1938,8 +2033,13 @@ function App() {
                 <div className="card-stack relative">
                     <CardErrorBoundary resetKey={currentTrack.id}>
                         <TrackCard
+                            key={currentTrack.id}
                             track={currentTrack}
-                            onSwipe={handleSwipe}
+                            onSwipe={requestSwipe}
+                            exitDirection={cardExit}
+                            onExitComplete={handleCardExitComplete}
+                            showSwipeCue={showSwipeCue}
+                            swipeCueText={swipeCueText}
                             showYouTube={showYouTube}
                             onToggleYouTube={() => setShowYouTube(!showYouTube)}
                             onSnippetComplete={() => setSnippetComplete(true)}
@@ -2004,6 +2104,9 @@ function App() {
             {!loading && hasStarted && currentCardIndex >= stack.length && (
                 <div className="text-center text-[#3d3a42]">
                     <p className="text-2xl mb-4 font-display">you&apos;ve reached the end</p>
+                    {currentList.length > 0 && (
+                        <p className="text-[#6b6570] text-sm mb-4">open the vinyl stack to export what you kept</p>
+                    )}
                     <button
                         onClick={() => setHasStarted(false)}
                         className="px-8 py-4 bg-[#f5e6ed] text-[#3d3a42] rounded-2xl font-bold hover:bg-[#e8d4db] transition-colors border border-[#d4c8d0]"
@@ -2018,6 +2121,7 @@ function App() {
                 currentList={currentList}
                 savedPlaylists={savedPlaylists}
                 onUpdatePlaylists={setPlaylists}
+                pulseToken={vinylPulseToken}
             />
             
             {/* Bottom Search Bar - Always visible when game has started */}
