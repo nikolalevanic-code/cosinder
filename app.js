@@ -25,6 +25,17 @@ const mapSimilarTrack = (track) => {
     };
 };
 
+const mapTrackCard = (track, similarity = 'seed track') => {
+    if (!track || track.id == null || !track.video_id) return null;
+    return {
+        id: String(track.id),
+        videoId: track.video_id,
+        name: trackDisplayName(track),
+        similarity,
+        thumbnail: `https://img.youtube.com/vi/${track.video_id}/mqdefault.jpg`
+    };
+};
+
 const cosineJson = async (url) => {
     const requestOnce = async () => {
         const response = await fetch(url);
@@ -1796,6 +1807,7 @@ function App() {
     const [cardExit, setCardExit] = useState(null);
     const [vinylPulseToken, setVinylPulseToken] = useState(0);
     const [showSwipeCue, setShowSwipeCue] = useState(false);
+    const [trackNotice, setTrackNotice] = useState('');
     const seenTrackIdsRef = useRef(new Set());
     const similarCacheRef = useRef(new Map());
     const audioControllerRef = useRef(null);
@@ -1885,6 +1897,12 @@ function App() {
         const t = setTimeout(() => setShowSwipeCue(false), 4000);
         return () => clearTimeout(t);
     }, [showSwipeCue]);
+
+    useEffect(() => {
+        if (!trackNotice) return;
+        const t = setTimeout(() => setTrackNotice(''), 2400);
+        return () => clearTimeout(t);
+    }, [trackNotice]);
     
     // Mark tracks as seen when they're displayed
     useEffect(() => {
@@ -1917,6 +1935,29 @@ function App() {
             if (!quiet) setLoading(false);
         }
     };
+
+    const fetchTrackCard = async (track) => {
+        if (!track?.id) return null;
+        try {
+            const body = await cosineJson(`/api/cosine/tracks/${encodeURIComponent(track.id)}`);
+            return mapTrackCard(body.data);
+        } catch (error) {
+            console.error('Error fetching track details:', error);
+            return null;
+        }
+    };
+
+    const skipCurrentTrack = (message) => {
+        const nextIndex = currentCardIndex + 1;
+        const nextTrack = stack[nextIndex];
+        if (message) setTrackNotice(message);
+        swipeExitPendingRef.current = null;
+        setCardExit(null);
+        setShowYouTube(false);
+        setSnippetComplete(false);
+        tryAutoplayNextTrack(nextTrack);
+        setCurrentCardIndex(nextIndex);
+    };
     
     const handleTrackSelect = async (track) => {
         setHasStarted(true);
@@ -1929,8 +1970,15 @@ function App() {
         setCardExit(null);
         swipeExitPendingRef.current = null;
         seenTrackIdsRef.current = new Set();
-        const similarTracks = await fetchSimilarTracks(track);
-        setStack(similarTracks);
+        setTrackNotice('');
+        const [referenceTrack, similarTracks] = await Promise.all([
+            fetchTrackCard(track),
+            fetchSimilarTracks(track)
+        ]);
+        const nextStack = referenceTrack
+            ? [referenceTrack, ...similarTracks.filter((item) => item.id !== referenceTrack.id)]
+            : similarTracks;
+        setStack(nextStack);
         setCurrentCardIndex(0);
         setSnippetComplete(false);
     };
@@ -2008,8 +2056,10 @@ function App() {
     };
     
     const handleVideoError = (errorCode) => {
-        // Auto-skip to next track (swipe left) after a small delay to show the error state
-        setTimeout(() => requestSwipe('left'), 500);
+        const errorLabel = errorCode === 150 || errorCode === 101
+            ? 'Track cannot play in embedded preview, skipping to the next one.'
+            : 'Track preview failed, skipping to the next one.';
+        setTimeout(() => skipCurrentTrack(errorLabel), 500);
     };
     
     const currentTrack = stack[currentCardIndex];
@@ -2024,6 +2074,15 @@ function App() {
                 <h1 className="text-5xl font-bold text-[#3d3a42] mb-4 font-display">cosinder.</h1>
                 <p className="text-[#6b6570] text-lg">powered by cosine.club&apos;s deep learning engine</p>
             </div>
+
+            {trackNotice && (
+                <div
+                    className="mb-6 px-4 py-3 max-w-xl w-full bg-[#f5e6ed] text-[#3d3a42] border border-[#d4c8d0] rounded-2xl shadow-sm text-sm text-center"
+                    style={{ animation: 'sessionPromptFadeIn 0.25s ease-out' }}
+                >
+                    {trackNotice}
+                </div>
+            )}
             
             {/* Search Bar */}
             {!hasStarted && (
