@@ -156,6 +156,8 @@ function SearchBar({ onTrackSelect, placeholder }) {
 }
 
 // Helper: linear volume fade over duration (ms)
+const SNIPPET_DURATION_MS = 8000;
+
 function fadeVolume(player, fromVol, toVol, durationMs, onDone) {
     if (!player || !player.setVolume) return;
     const steps = 20;
@@ -605,7 +607,7 @@ function AudioSnippetPlayer({
                 } else {
                     advance(idx);
                 }
-            }, 5000);
+            }, SNIPPET_DURATION_MS);
         };
 
         const jumpToSnippet = (idx) => {
@@ -2026,6 +2028,7 @@ function App() {
     };
     
     const handleTrackSelect = async (track) => {
+        setLoading(true);
         setHasStarted(true);
         setMobileSessionAudioEnabled(false);
         sessionNamePromptShownRef.current = false;
@@ -2037,16 +2040,20 @@ function App() {
         swipeExitPendingRef.current = null;
         seenTrackIdsRef.current = new Set();
         setTrackNotice('');
-        const [referenceTrack, similarTracks] = await Promise.all([
-            fetchTrackCard(track),
-            fetchSimilarTracks(track)
-        ]);
-        const nextStack = referenceTrack
-            ? [referenceTrack, ...similarTracks.filter((item) => item.id !== referenceTrack.id)]
-            : similarTracks;
-        setStack(nextStack);
-        setCurrentCardIndex(0);
-        setSnippetComplete(false);
+        try {
+            const [referenceTrack, similarTracks] = await Promise.all([
+                fetchTrackCard(track),
+                fetchSimilarTracks(track, { quiet: true })
+            ]);
+            const nextStack = referenceTrack
+                ? [referenceTrack, ...similarTracks.filter((item) => item.id !== referenceTrack.id)]
+                : similarTracks;
+            setStack(nextStack);
+            setCurrentCardIndex(0);
+            setSnippetComplete(false);
+        } finally {
+            setLoading(false);
+        }
     };
     
     const handleSwipe = async (direction) => {
