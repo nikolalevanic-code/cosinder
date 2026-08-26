@@ -223,7 +223,10 @@ function AudioSnippetPlayer({
     const playGenerationRef = useRef(0);
 
     isMutedRef.current = isMuted ?? false;
-    hasAudioEnabledRef.current = hasAudioEnabled;
+
+    useEffect(() => {
+        hasAudioEnabledRef.current = hasAudioEnabled;
+    }, [hasAudioEnabled]);
 
     const getPlayer = (which) => which === 'A' ? playerARef.current : playerBRef.current;
 
@@ -361,16 +364,20 @@ function AudioSnippetPlayer({
                             hasStartedPlaybackRef.current = true;
                         } else if (ev.data === YT.PlayerState.PAUSED || ev.data === YT.PlayerState.ENDED) {
                             setIsPlaying(false);
-                        } else if (
-                            pendingAutoplayRef.current &&
-                            (ev.data === YT.PlayerState.CUED || ev.data === YT.PlayerState.PAUSED)
-                        ) {
-                            pendingAutoplayRef.current = false;
-                            if (autoPlay && canAutoplay() && !hasPlayedRef.current) {
-                                hasPlayedRef.current = true;
-                                playSnippets();
-                            }
-                        }
+                } else if (
+                    pendingAutoplayRef.current &&
+                    (ev.data === YT.PlayerState.CUED || ev.data === YT.PlayerState.PAUSED)
+                ) {
+                    // loadVideoById finished — finish autoplay even if an early
+                    // playVideo raced ahead of the cue (common on mobile swipes).
+                    if (autoPlay && canAutoplay() && !hasStartedPlaybackRef.current) {
+                        pendingAutoplayRef.current = false;
+                        hasPlayedRef.current = false;
+                        playSnippets();
+                    } else {
+                        pendingAutoplayRef.current = false;
+                    }
+                }
                     },
                     onError: (ev) => {
                         const code = ev.data;
@@ -479,14 +486,12 @@ function AudioSnippetPlayer({
             const currentPa = playerARef.current;
             if (!currentPa || currentPa !== pa) return; // player replaced during async wait
             if (playGenerationRef.current !== generation) return;
-            if (!hasPlayedRef.current) {
-                try {
-                    currentPa.playVideo();
-                    hasPlayedRef.current = true;
-                } catch (e) {
-                    console.error('[snippets] playVideo error:', e);
-                    return;
-                }
+            try {
+                currentPa.playVideo();
+                hasPlayedRef.current = true;
+            } catch (e) {
+                console.error('[snippets] playVideo error:', e);
+                return;
             }
             if (seekTimeoutRef.current) clearTimeout(seekTimeoutRef.current);
             seekTimeoutRef.current = setTimeout(() => {
@@ -726,7 +731,9 @@ function AudioSnippetPlayer({
         }
     };
 
-    // Called synchronously from swipe handlers while the user-gesture is active
+    // Called from swipe handlers. After the first mobile unlock, reuse the same
+    // iframe — do not rely on the swipe still being inside iOS's gesture window
+    // (fly-off animation + right-swipe network await both break that).
     const beginTrack = (newVideoId, { fromGesture = false } = {}) => {
         if (!newVideoId) return;
         loadedVideoIdRef.current = newVideoId;
@@ -743,18 +750,18 @@ function AudioSnippetPlayer({
             const canPlay = IS_MOBILE ? hasAudioEnabledRef.current : true;
             if (!autoPlay || !canPlay) return;
 
+            pendingAutoplayRef.current = true;
+
             if (fromGesture) {
+                // Best-effort start while a gesture may still be active; CUED
+                // handler + playSnippets finish the job if this races loadVideoById.
                 try {
                     pa.playVideo();
-                    hasPlayedRef.current = true;
                 } catch (e) {
                     console.error('[snippets] gesture playVideo error:', e);
                 }
-                playSnippets();
-            } else {
-                pendingAutoplayRef.current = true;
-                playSnippets();
             }
+            playSnippets();
         } catch (e) {
             console.error('[snippets] beginTrack error:', e);
         }
@@ -899,11 +906,29 @@ function TrackCard({
     const cardRef = useRef(null);
     const [isDragging, setIsDragging] = useState(false);
     const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
+    const [enterClass, setEnterClass] = useState('card-enter');
     const startPosRef = useRef({ x: 0, y: 0 });
     const dragOffsetRef = useRef({ x: 0, y: 0 });
     const hasDraggedRef = useRef(false);
     const localExitRef = useRef(false);
+    const isFirstTrackMountRef = useRef(true);
     dragOffsetRef.current = dragOffset;
+    
+    // Keep the YouTube snippet player mounted across swipes (critical on mobile:
+    // remounting the iframe loses the user-gesture unlock). Only reset swipe UI.
+    useEffect(() => {
+        localExitRef.current = false;
+        setDragOffset({ x: 0, y: 0 });
+        setIsDragging(false);
+        if (isFirstTrackMountRef.current) {
+            isFirstTrackMountRef.current = false;
+            return;
+        }
+        // Re-trigger enter animation without remounting the persistent player
+        setEnterClass('');
+        const raf = requestAnimationFrame(() => setEnterClass('card-enter'));
+        return () => cancelAnimationFrame(raf);
+    }, [track.id]);
     
     useEffect(() => {
         if (!exitDirection) return;
@@ -991,7 +1016,7 @@ function TrackCard({
     return (
         <div
             ref={cardRef}
-            className={`swipe-card card-enter ${isDragging ? 'swiping' : ''} ${exitClass}`}
+            className={`swipe-card ${enterClass} ${isDragging ? 'swiping' : ''} ${exitClass}`}
             style={{
                 ...style,
                 ...(exitDirection
@@ -1004,55 +1029,58 @@ function TrackCard({
             onPointerDown={handlePointerDown}
         >
             <div className="relative bg-white rounded-2xl shadow-sm border border-[#d4c8d0] overflow-hidden w-full max-w-md">
-                {/* Track Info Header */}
-                <div className="p-6 bg-[#f5e6ed] text-[#3d3a42] font-display">
-                    <h2 className="text-2xl font-bold mb-2">{track.name}</h2>
-                    <div className="flex items-center justify-end">
-                        <button
-                            onClick={(e) => {
-                                e.stopPropagation();
-                                onToggleYouTube();
-                            }}
-                            className="px-4 py-2 bg-[#e8d4db] hover:bg-[#e0d6de] rounded-lg text-sm font-medium text-[#3d3a42] transition-colors"
-                        >
-                            {showYouTube ? 'hide player' : 'show full track'}
-                        </button>
+                {/* Visual-only remount for enter animation / fresh art — keep snippet player below */}
+                <div key={track.id}>
+                    {/* Track Info Header */}
+                    <div className="p-6 bg-[#f5e6ed] text-[#3d3a42] font-display">
+                        <h2 className="text-2xl font-bold mb-2">{track.name}</h2>
+                        <div className="flex items-center justify-end">
+                            <button
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    onToggleYouTube();
+                                }}
+                                className="px-4 py-2 bg-[#e8d4db] hover:bg-[#e0d6de] rounded-lg text-sm font-medium text-[#3d3a42] transition-colors"
+                            >
+                                {showYouTube ? 'hide player' : 'show full track'}
+                            </button>
+                        </div>
                     </div>
-                </div>
-                
-                {/* YouTube Player (optional) */}
-                {showYouTube && (
-                    <div className="aspect-video bg-black">
-                        <iframe
-                            width="100%"
-                            height="100%"
-                            src={`https://www.youtube.com/embed/${track.videoId}?autoplay=1`}
-                            frameBorder="0"
-                            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                            allowFullScreen
-                        ></iframe>
-                    </div>
-                )}
-                
-                {/* Track Artwork */}
-                <div className="aspect-square bg-[#f5e6ed] relative overflow-hidden">
-                    {track.thumbnail ? (
-                        <img 
-                            src={track.thumbnail} 
-                            alt={track.name}
-                            className="w-full h-full object-cover"
-                            onError={(e) => {
-                                e.target.style.display = 'none';
-                            }}
-                        />
-                    ) : (
-                        <div className="w-full h-full flex items-center justify-center text-[#9b8bb5] text-6xl">
-                            &#9834;
+                    
+                    {/* YouTube Player (optional) */}
+                    {showYouTube && (
+                        <div className="aspect-video bg-black">
+                            <iframe
+                                width="100%"
+                                height="100%"
+                                src={`https://www.youtube.com/embed/${track.videoId}?autoplay=1`}
+                                frameBorder="0"
+                                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                                allowFullScreen
+                            ></iframe>
                         </div>
                     )}
+                    
+                    {/* Track Artwork */}
+                    <div className="aspect-square bg-[#f5e6ed] relative overflow-hidden">
+                        {track.thumbnail ? (
+                            <img 
+                                src={track.thumbnail} 
+                                alt={track.name}
+                                className="w-full h-full object-cover"
+                                onError={(e) => {
+                                    e.target.style.display = 'none';
+                                }}
+                            />
+                        ) : (
+                            <div className="w-full h-full flex items-center justify-center text-[#9b8bb5] text-6xl">
+                                &#9834;
+                            </div>
+                        )}
+                    </div>
                 </div>
                 
-                {/* Audio Snippet Player */}
+                {/* Persistent snippet player — must not remount on swipe (mobile unlock) */}
                 <AudioSnippetPlayer 
                     videoId={track.videoId} 
                     onComplete={onSnippetComplete}
@@ -1084,8 +1112,8 @@ function TrackCard({
     );
 }
 
-// Get access token from backend
-const getAccessToken = async () => {
+// Get YouTube OAuth session from backend
+const getYouTubeAuth = async () => {
     const sessionId = localStorage.getItem('youtube_session_id');
     if (!sessionId) {
         throw new Error('Not authenticated');
@@ -1098,7 +1126,21 @@ const getAccessToken = async () => {
     }
     
     const data = await response.json();
-    return data.access_token;
+    return {
+        accessToken: data.access_token,
+        email: typeof data.email === 'string' && data.email ? data.email : null
+    };
+};
+
+const getAccessToken = async () => {
+    const auth = await getYouTubeAuth();
+    return auth.accessToken;
+};
+
+const buildYouTubePlaylistUrl = (playlistId, email) => {
+    const base = `https://www.youtube.com/playlist?list=${playlistId}`;
+    if (!email) return base;
+    return `${base}&authuser=${encodeURIComponent(email)}`;
 };
 
 // YouTube API Functions
@@ -1188,6 +1230,7 @@ function ExportToYouTubeModal({ isOpen, onClose, likedTracks }) {
     const [exportError, setExportError] = useState(null);
     const [exportSuccess, setExportSuccess] = useState(null);
     const [isAuthenticated, setIsAuthenticated] = useState(false);
+    const [googleEmail, setGoogleEmail] = useState(null);
     const [progress, setProgress] = useState({ current: 0, total: 0 });
     const [pendingAutoExport, setPendingAutoExport] = useState(false);
     const autoExportStartedRef = useRef(false);
@@ -1207,10 +1250,23 @@ function ExportToYouTubeModal({ isOpen, onClose, likedTracks }) {
         const sessionId = params.get('session');
         const pending = readPendingYouTubeExport();
         
+        const hydrateAuth = async () => {
+            try {
+                const auth = await getYouTubeAuth();
+                setIsAuthenticated(true);
+                setGoogleEmail(auth.email);
+            } catch (error) {
+                localStorage.removeItem('youtube_session_id');
+                setIsAuthenticated(false);
+                setGoogleEmail(null);
+            }
+        };
+        
         if (authStatus === 'success' && sessionId) {
             localStorage.setItem('youtube_session_id', sessionId);
             setIsAuthenticated(true);
             setExportError(null);
+            hydrateAuth();
             if (pending?.playlistName) {
                 setPlaylistName(pending.playlistName);
             }
@@ -1228,7 +1284,7 @@ function ExportToYouTubeModal({ isOpen, onClose, likedTracks }) {
         } else {
             const existingSession = localStorage.getItem('youtube_session_id');
             if (existingSession) {
-                setIsAuthenticated(true);
+                hydrateAuth();
             }
         }
     }, []);
@@ -1254,6 +1310,8 @@ function ExportToYouTubeModal({ isOpen, onClose, likedTracks }) {
         setExportSuccess(null);
         
         try {
+            const auth = await getYouTubeAuth();
+            setGoogleEmail(auth.email);
             setProgress({ current: 0, total: likedTracks.length });
             const playlistId = await createYouTubePlaylist(name);
             
@@ -1271,14 +1329,16 @@ function ExportToYouTubeModal({ isOpen, onClose, likedTracks }) {
                 setProgress({ current: i + 1, total: likedTracks.length });
             }
             
-            const playlistUrl = `https://www.youtube.com/playlist?list=${playlistId}`;
+            const playlistUrl = buildYouTubePlaylistUrl(playlistId, auth.email);
             setExportSuccess({
                 message: `Successfully created playlist with ${successCount} tracks!`,
-                url: playlistUrl
+                url: playlistUrl,
+                email: auth.email
             });
         } catch (error) {
             if (error.message.includes('Not authenticated') || error.message.includes('Session not found')) {
                 setIsAuthenticated(false);
+                setGoogleEmail(null);
                 localStorage.removeItem('youtube_session_id');
                 setExportError('authentication expired. please sign in again.');
             } else {
@@ -1338,6 +1398,7 @@ function ExportToYouTubeModal({ isOpen, onClose, likedTracks }) {
         }
         localStorage.removeItem('youtube_session_id');
         setIsAuthenticated(false);
+        setGoogleEmail(null);
     };
     
     if (!isOpen) return null;
@@ -1368,6 +1429,9 @@ function ExportToYouTubeModal({ isOpen, onClose, likedTracks }) {
                             >
                                 open playlist →
                             </a>
+                            {exportSuccess.email && (
+                                <p className="text-[#2e7d32] text-xs mt-2">opens in {exportSuccess.email}</p>
+                            )}
                         </div>
                         <button
                             onClick={handleClose}
@@ -1409,14 +1473,16 @@ function ExportToYouTubeModal({ isOpen, onClose, likedTracks }) {
                         )}
                         
                         {isAuthenticated && (
-                            <div className="bg-[#e8f5e9] border border-[#c8e6c9] rounded-lg p-3 flex items-center justify-between">
-                                <p className="text-[#2e7d32] text-sm flex items-center gap-2">
-                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
-                                    signed in with google
+                            <div className="bg-[#e8f5e9] border border-[#c8e6c9] rounded-lg p-3 flex items-center justify-between gap-3">
+                                <p className="text-[#2e7d32] text-sm flex items-center gap-2 min-w-0">
+                                    <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
+                                    <span className="truncate">
+                                        {googleEmail ? `signed in as ${googleEmail}` : 'signed in with google'}
+                                    </span>
                                 </p>
                                 <button
                                     onClick={handleLogout}
-                                    className="text-xs text-[#2e7d32] hover:underline"
+                                    className="text-xs text-[#2e7d32] hover:underline shrink-0"
                                 >
                                     sign out
                                 </button>
@@ -1955,7 +2021,7 @@ function App() {
         setCardExit(null);
         setShowYouTube(false);
         setSnippetComplete(false);
-        tryAutoplayNextTrack(nextTrack);
+        tryAutoplayNextTrack(nextTrack, false);
         setCurrentCardIndex(nextIndex);
     };
     
@@ -2029,7 +2095,8 @@ function App() {
         } else {
             const nextIndex = currentCardIndex + 1;
             const nextTrack = stack[nextIndex];
-            tryAutoplayNextTrack(nextTrack);
+            // Fly-off already consumed the gesture window — rely on unlocked persistent iframe
+            tryAutoplayNextTrack(nextTrack, false);
             setCurrentCardIndex(nextIndex);
             setCardExit(null);
         }
@@ -2102,7 +2169,6 @@ function App() {
                 <div className="card-stack relative">
                     <CardErrorBoundary resetKey={currentTrack.id}>
                         <TrackCard
-                            key={currentTrack.id}
                             track={currentTrack}
                             onSwipe={requestSwipe}
                             exitDirection={cardExit}
